@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>박용후 대표 '관점을 디자인하라' 강연 보고서</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            line-height: 1.8;
+            color: #2c3e50;
+            background-color: #f8f9fa;
+            overflow-x: hidden;
+        }
+
+        .container {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Sidebar Styles */
+        .sidebar {
+            width: 300px;
+            flex-shrink: 0;
+            background: #1a1a1a;
+            padding: 2rem 1.5rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            box-shadow: 4px 0 10px rgba(0,0,0,0.3);
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+        }
+
+        .sidebar-title {
+            color: white;
+            font-size: 1.3rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            border-bottom: 2px solid rgba(255,255,255,0.2);
+            padding-bottom: 0.8rem;
+        }
+
+        .sidebar-subtitle {
+            color: rgba(255,255,255,0.7);
+            font-size: 0.9rem;
+            margin-bottom: 2rem;
+        }
+
+        .nav-menu {
+            flex-grow: 1;
+        }
+
+        .sidebar-btn {
+            width: 100%;
+            padding: 1rem 1.2rem;
+            margin-bottom: 0.8rem;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            color: rgba(255,255,255,0.9);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: left;
+            font-size: 0.95rem;
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+        }
+
+        .sidebar-btn:hover {
+            background: rgba(255,255,255,0.1);
+            border-color: rgba(255,255,255,0.2);
+            transform: translateX(5px);
+        }
+
+        .sidebar-btn.active {
+            background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+            border-color: #3b82f6;
+            color: white;
+            font-weight: 600;
+        }
+
+        .sidebar-btn i {
+            font-size: 1.1rem;
+        }
+
+        .download-btn {
+            padding: 1rem;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: auto;
+        }
+
+        .download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(16, 185, 129, 0.3);
+        }
+
+        .download-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        /* Content Wrapper - Screen View */
+        .content-wrapper {
+            margin-left: 300px;
+            flex-grow: 1;
+            padding: 2rem;
+            background-color: #f8f9fa;
+        }
+
+        /* PDF Page Structure - Screen View (픽셀 단위) */
+        .pdf-page {
+            width: 800px;
+            min-height: 1000px;
+            margin: 0 auto 2rem;
+            padding: 60px 50px;
+            background: white;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            display: none;
+        }
+
+        .pdf-page.visible {
+            display: block;
+        }
+
+        .page-header {
+            text-align: center;
+            padding-bottom: 15px;
+            margin-bottom: 25px;
+            border-bottom: 3px solid #1e40af;
+        }
+
+        .page-header h1 {
+            font-size: 1.2rem;
+            color: #1e40af;
+            font-weight: 700;
+            margin: 0;
+        }
+
+        .page-number {
+            text-align: right;
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 8px;
+        }
+
+        /* Content Styles */
+        h1 {
+            font-size: 1.8rem;
+            color: #1e40af;
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.8rem;
+            border-bottom: 3px solid #e5e7eb;
+            font-weight: 700;
+            page-break-before: always;
+            break-before: page;
+        }
+
+        h1:first-child {
+            page-break-before: auto;
+            break-before: auto;
+        }
+
+        h2 {
+            font-size: 1.4rem;
+            color: #1e3a8a;
+            margin: 2rem 0 1rem;
+            font-weight: 600;
+            page-break-after: avoid;
+            break-after: avoid;
+        }
+
+        h3 {
+            font-size: 1.2rem;
+            color: #2563eb;
+            margin: 1.5rem 0 1rem;
+            font-weight: 600;
+            page-break-after: avoid;
+            break-after: avoid;
+        }
+
+        h4 {
+            font-size: 1.05rem;
+            color: #3b82f6;
+            margin: 1.2rem 0 0.8rem;
+            font-weight: 600;
+            page-break-after: avoid;
+            break-after: avoid;
+        }
+
+        p {
+            margin-bottom: 1rem;
+            text-align: justify;
+            line-height: 1.9;
+        }
+
+        blockquote {
+            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+            border-left: 4px solid #2563eb;
+            padding: 1.2rem 1.5rem;
+            margin: 1.5rem 0;
+            font-style: italic;
+            color: #1e40af;
+            border-radius: 4px;
+            page-break-inside: avoid;
+            break-inside: avoid;
+        }
+
+        ul, ol {
+            margin: 1rem 0 1rem 2rem;
+            line-height: 1.9;
+        }
+
+        li {
+            margin-bottom: 0.6rem;
+        }
+
+        .key-points {
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+            border-left: 4px solid #f59e0b;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            border-radius: 4px;
+            page-break-inside: avoid;
+            break-inside: avoid;
+        }
+
+        .key-points-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #92400e;
+            margin-bottom: 1rem;
+        }
+
+        .chart-container {
+            width: 100%;
+            height: 350px;
+            margin: 1.5rem 0;
+            page-break-inside: avoid;
+            break-inside: avoid;
+        }
+
+        .data-source {
+            text-align: right;
+            font-size: 0.85rem;
+            color: #6b7280;
+            margin-top: 0.5rem;
+            font-style: italic;
+        }
+
+        /* Print/PDF Styles */
+        @media print {
+            body {
+                background: white;
+            }
+
+            .sidebar {
+                display: none !important;
+            }
+
+            .content-wrapper {
+                margin-left: 0;
+                padding: 0;
+            }
+
+            .pdf-page {
+                width: 210mm;
+                min-height: 297mm;
+                margin: 0;
+                padding: 25mm 20mm;
+                box-shadow: none;
+                page-break-after: always;
+                break-after: page;
+                display: block !important;
+            }
+
+            .pdf-page:last-child {
+                page-break-after: auto;
+                break-after: auto;
+            }
+
+            h1 {
+                page-break-before: always;
+                break-before: page;
+            }
+
+            h1:first-child {
+                page-break-before: auto;
+                break-before: auto;
+            }
+
+            h2, h3, h4 {
+                page-break-after: avoid;
+                break-after: avoid;
+            }
+
+            blockquote, .key-points, .chart-container {
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+        }
+
+        @page {
+            size: A4;
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div>
+                <h2 class="sidebar-title">보고서 네비게이션</h2>
+                <p class="sidebar-subtitle">섹션을 선택하세요</p>
+
+                <nav class="nav-menu">
+                    <button class="sidebar-btn active" data-section="0">
+                        <i class="fas fa-file-alt"></i>
+                        <span>보고서 개요</span>
+                    </button>
+                    <button class="sidebar-btn" data-section="1">
+                        <i class="fas fa-bullseye"></i>
+                        <span>강연의 서막</span>
+                    </button>
+                    <button class="sidebar-btn" data-section="2">
+                        <i class="fas fa-lightbulb"></i>
+                        <span>핵심 철학</span>
+                    </button>
+                    <button class="sidebar-btn" data-section="3">
+                        <i class="fas fa-cogs"></i>
+                        <span>관점 디자인 방법론</span>
+                    </button>
+                    <button class="sidebar-btn" data-section="4">
+                        <i class="fas fa-flag-checkered"></i>
+                        <span>결론 및 실천방안</span>
+                    </button>
+                </nav>
+            </div>
+
+            <button class="download-btn" id="downloadBtn">
+                <i class="fas fa-download"></i>
+                PDF 다운로드
+            </button>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="content-wrapper" id="contentWrapper">
+            <!-- Section 0 Pages will be inserted here by JavaScript -->
+        </main>
+    </div>
+
+    <script>
+        // Section content data
+        const sectionData = {
+            0: {
+                title: "보고서 개요",
+                pages: [
+                    {
+                        content: `
+                            <h1>보고서 작성 배경 및 목적</h1>
+                            <p>본 보고서는 박용후 대표님((주)피와이에이치)이 고려대학교 AMP(최고경영자과정) 25기 원우들을 대상으로 진행한 '관점을 디자인하라' 강연의 핵심 내용을 분석하고, 그가 제시하는 철학과 방법론을 체계적으로 정리하는 것을 목적으로 함. 강연은 단순한 성공 사례 나열을 넘어, 변화의 시대를 살아가는 리더들이 갖추어야 할 근본적인 사고의 틀을 제시했다는 점에서 깊은 통찰을 제공함.</p>
+
+                            <h2>박용후 대표님 소개</h2>
+                            <p>박용후 대표님은 '관점 디자이너'라는 독특한 직업을 가진 인물로, 카카오, 배달의민족, 다방 등 국내 유수의 스타트업들의 성공 신화 뒤에 있었던 커뮤니케이션 총괄 및 마케팅 고문임. 대표님은 성공하는 기업과 그렇지 못한 기업의 근본적인 차이가 '관점'에 있음을 역설하며, 각 분야에서 이미 성공을 이룬 리더들 앞에서 기존의 성공 방정식과 고정관념을 되돌아보게 하는 '사고의 전환'을 촉구함.</p>
+
+                            <blockquote>
+                                "우리는 과잉의 시대에 살고 있습니다. 이 시대, 차별화의 본질은 '더 많이', '더 빠르게'가 아닙니다. 바로 '다르게 보는 것', 즉 관점(Perspective)을 디자인하는 것입니다."
+                            </blockquote>
+
+                            <h2>강연의 핵심 주제</h2>
+                            <p>강연은 현대 사회가 직면한 '과잉의 시대'를 진단하며, 기존의 양적 성장 전략이 더 이상 경쟁 우위를 가져다주지 못한다고 강조함. 제품, 정보, 선택지가 넘쳐나는 환경에서 진정한 경쟁력은 '차별화된 관점'에서 나온다는 것이 핵심 메시지임.</p>
+                        `
+                    },
+                    {
+                        content: `
+                            <h2>보고서의 구성</h2>
+                            <p>본 보고서는 네 가지 주요 섹션으로 구성됨. 첫째, 강연의 서막에서는 왜 지금 '관점 디자인'이 필요한지에 대한 시대적 진단과 배경을 다룸. 둘째, 핵심 철학 섹션에서는 '당연함'에 대한 도전과 '본질'의 재정의라는 사고의 기반을 탐구함. 셋째, 관점 디자인의 방법론 섹션에서는 연결, 재정의, 경험 설계라는 3단계 프로세스를 구체적 사례와 함께 분석함. 마지막으로 결론 섹션에서는 핵심 내용을 요약하고 실천적 적용 방안을 제시함.</p>
+
+                            <div class="key-points">
+                                <div class="key-points-title">보고서 핵심 포인트</div>
+                                <ul>
+                                    <li><strong>시대 진단:</strong> 현대는 모든 것이 넘쳐나는 '과잉의 시대'로, 기존의 성공 방식(더 좋게, 더 많이)은 한계에 봉착함.</li>
+                                    <li><strong>관점의 중요성:</strong> 생존과 성장의 유일한 길은 '다름'을 만드는 것이며, 그 원천은 세상을 해석하는 틀인 '관점'임.</li>
+                                    <li><strong>실천 가능성:</strong> 관점 디자인은 소수의 천재만이 할 수 있는 것이 아니라, 의식적인 훈련과 노력을 통해 누구나 습득할 수 있는 기술이자 태도임.</li>
+                                    <li><strong>구체적 방법론:</strong> 연결, 재정의, 경험 설계라는 3단계 프로세스를 통해 실제 비즈니스에 적용할 수 있음.</li>
+                                </ul>
+                            </div>
+
+                            <h2>강연의 의의</h2>
+                            <p>박용후 대표님의 강연은 단순히 마케팅이나 브랜딩 기법을 알려주는 것이 아니라, 경영자가 가져야 할 근본적인 사고방식의 전환을 촉구함. 성공을 이룬 최고경영자들에게조차 자신들의 '당연함'을 되돌아보게 하고, 끊임없이 관점을 업데이트해야 하는 시대적 요구를 일깨워줌. 이는 단순한 지식의 전달을 넘어, 청중 스스로가 '관점 디자이너'로 거듭나도록 하는 변화의 촉매제 역할을 함.</p>
+                        `
+                    }
+                ]
+            },
+            1: {
+                title: "강연의 서막: 왜 지금 '관점 디자인'인가?",
+                pages: [
+                    {
+                        content: `
+                            <h1>강연의 서막: 왜 지금 '관점 디자인'인가?</h1>
+
+                            <h2>강연 도입부 요약</h2>
+                            <p>강연은 '관점 디자이너'라는 독특한 직업을 가진 박용후 대표님 자신에 대한 소개로 시작되었음. 대표님은 카카오, 배달의민족, 다방 등 국내 유수의 스타트업들의 성공 신화 뒤에 있었던 커뮤니케이션 총괄 및 마케팅 고문으로서의 경험을 바탕으로, 성공하는 기업과 그렇지 못한 기업의 근본적인 차이가 '관점'에 있음을 역설함.</p>
+
+                            <p>고려대학교 AMP 과정이라는 특수한 청중, 즉 각 분야에서 이미 성공을 이룬 리더들 앞에서 대표님은 새로운 지식의 전달이 아닌, 기존의 성공 방정식과 고정관념을 되돌아보게 하는 '사고의 전환'을 촉구하며 강연의 포문을 열었음.</p>
+
+                            <h2>핵심 화두 제시: 과잉의 시대와 관점의 필요성</h2>
+                            <p>박용후 대표님은 현대 사회를 <strong>'과잉의 시대(Age of Excess)'</strong>로 정의함. 제품, 서비스, 정보 등 모든 것이 넘쳐나는 이 시대에는 더 좋은(Better), 더 많은(More), 더 빠른(Faster) 것만으로는 더 이상 경쟁 우위를 확보할 수 없다고 진단함.</p>
+
+                            <p>과거 산업화 시대의 성공 공식이었던 '규모의 경제'와 '효율성'은 디지털 전환과 글로벌 경쟁 심화 속에서 그 힘을 잃어가고 있음. 이러한 환경에서 생존과 성장을 위한 유일한 돌파구는 <strong>'다름(Different)'</strong>을 만들어내는 것이며, 그 다름의 원천이 바로 <strong>'관점(Perspective)'</strong>이라고 강조함.</p>
+                        `
+                    },
+                    {
+                        content: `
+                            <blockquote>
+                                "모든 것이 넘쳐나는 시대, 당신의 다름은 무엇입니까? 그 다름은 당신이 세상을 어떻게 바라보는지, 즉 당신의 관점에서 시작됩니다."
+                            </blockquote>
+
+                            <p>대표님은 관점이란 단순히 사물을 보는 시각을 넘어, 현상을 해석하고, 의미를 부여하며, 새로운 가능성을 발견하는 능동적인 '설계(Design)'의 과정임을 분명히 함. 남들이 보지 못하는 것을 보고, 당연하게 여기는 것들을 낯설게 바라봄으로써 새로운 시장을 창출하고 고객의 마음을 사로잡을 수 있음.</p>
+
+                            <p>이는 마치 같은 재료를 가지고도 어떤 셰프는 평범한 요리를, 다른 셰프는 미슐랭 스타급 요리를 만들어내는 것과 같은 이치임. 재료의 차이가 아닌 요리를 바라보는 관점과 철학의 차이가 결과의 차이를 만들어냄.</p>
+
+                            <h2>강연의 목표 설정</h2>
+                            <p>본 강연의 목표는 명확함. 그것은 참석한 최고경영자들이 '관점 디자인'이라는 개념을 지식으로 습득하는 데 그치지 않고, 자신의 비즈니스와 삶에 직접 적용할 수 있는 <strong>'사고의 운영체제(Operating System)'</strong>를 업그레이드하도록 돕는 것임.</p>
+
+                            <p>박용후 대표님은 강연 내내 다양한 사례와 질문을 통해 참석자들이 스스로의 '당연함'을 의심하고, 고정관념의 틀을 깨며, 새로운 관점을 '발견'하고 '설계'하는 과정을 체험하도록 유도함.</p>
+                        `
+                    },
+                    {
+                        content: `
+                            <div class="key-points">
+                                <div class="key-points-title">서막의 핵심 요점</div>
+                                <ul>
+                                    <li><strong>시대 진단:</strong> 현대는 모든 것이 넘쳐나는 '과잉의 시대'로, 기존의 성공 방식(더 좋게, 더 많이)은 한계에 봉착함.</li>
+                                    <li><strong>핵심 화두:</strong> 생존과 성장의 유일한 길은 '다름'을 만드는 것이며, 그 원천은 세상을 해석하는 틀인 '관점'임.</li>
+                                    <li><strong>강연 목표:</strong> 참석자들이 스스로의 관점을 점검하고, 새로운 관점을 '설계'하는 방법을 체득하여 현장에서 변화를 주도하는 '관점 디자이너'가 되도록 도움.</li>
+                                </ul>
+                            </div>
+
+                            <p>궁극적으로는 강연이 끝난 후 각자의 현장으로 돌아가 '관점 디자이너'로서 조직의 변화를 이끌고, 미래를 주도하는 리더가 되도록 영감을 불어넣는 데 그 목적이 있음을 밝힘. 이는 단순히 새로운 지식을 습득하는 것이 아니라, 사고방식 자체를 업그레이드하여 지속적인 혁신을 만들어내는 리더로 성장하게 하는 것임.</p>
+
+                            <h2>과잉의 시대가 요구하는 새로운 리더십</h2>
+                            <p>박용후 대표님은 과거의 리더십이 '실행력'과 '효율성'에 초점을 맞췄다면, 현재와 미래의 리더십은 '통찰력'과 '창의성'에 기반해야 한다고 강조함. 이제는 주어진 문제를 빠르게 해결하는 것보다, 올바른 문제를 정의하고 새로운 기회를 발견하는 능력이 더욱 중요해졌음. 이러한 능력의 핵심이 바로 '관점을 디자인하는 힘'이라는 것이 강연의 출발점임.</p>
+                        `
+                    }
+                ]
+            },
+            2: {
+                title: "핵심 철학",
+                pages: [
+                    {
+                        content: `
+                            <h1>핵심 철학</h1>
+                            <h2>당연함에 대한 도전</h2>
+                            <p>박용후 대표님의 관점 디자인 철학의 핵심은 '당연함'에 대한 끊임없는 도전입니다. 우리가 당연하게 받아들이는 것들이 실제로는 습관, 편견, 관습에 불과할 수 있다는 인식에서 출발합니다.</p>
+                        `
+                    }
+                ]
+            },
+            3: {
+                title: "관점 디자인 방법론",
+                pages: [
+                    {
+                        content: `
+                            <h1>관점 디자인 방법론</h1>
+                            <h2>3단계 프로세스</h2>
+                            <p>관점 디자인은 다음 3단계로 구성됩니다: 1) 연결하기, 2) 재정의하기, 3) 경험 설계하기</p>
+                        `
+                    }
+                ]
+            },
+            4: {
+                title: "결론 및 실천방안",
+                pages: [
+                    {
+                        content: `
+                            <h1>결론 및 실천방안</h1>
+                            <h2>핵심 요약</h2>
+                            <p>관점 디자인은 단순한 이론이 아닌 실천 가능한 방법론입니다. 지속적인 훈련과 적용을 통해 누구나 관점 디자이너가 될 수 있습니다.</p>
+                        `
+                    }
+                ]
+            }
+        };
+
+        // Generate pages dynamically
+        function generatePages(sectionNumber) {
+            const wrapper = document.getElementById('contentWrapper');
+            wrapper.innerHTML = '';
+
+            const section = sectionData[sectionNumber];
+            if (!section) return;
+
+            section.pages.forEach((page, index) => {
+                const pageDiv = document.createElement('div');
+                pageDiv.className = 'pdf-page visible';
+                pageDiv.innerHTML = `
+                    <div class="page-header">
+                        <h1>박용후 대표 '관점을 디자인하라' 강연 핵심 내용 분석 보고서</h1>
+                        <div class="page-number">Page ${index + 1} of ${section.pages.length}</div>
+                    </div>
+                    ${page.content}
+                `;
+                wrapper.appendChild(pageDiv);
+            });
+
+            // Initialize charts if needed
+            initializeCharts();
+        }
+
+        // Navigation
+        document.querySelectorAll('.sidebar-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+
+                const sectionNum = parseInt(this.dataset.section);
+                generatePages(sectionNum);
+            });
+        });
+
+        // PDF Download - Only content-wrapper, exclude sidebar
+        document.getElementById('downloadBtn').addEventListener('click', async function() {
+            const activeBtn = document.querySelector('.sidebar-btn.active');
+            const sectionName = activeBtn.querySelector('span').textContent.trim();
+
+            this.disabled = true;
+            this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> PDF 생성 중...';
+
+            try {
+                // Clone content-wrapper to avoid modifying the original
+                const contentWrapper = document.getElementById('contentWrapper');
+                const clone = contentWrapper.cloneNode(true);
+
+                // Create temporary container for PDF generation
+                const tempContainer = document.createElement('div');
+                tempContainer.style.position = 'absolute';
+                tempContainer.style.left = '-9999px';
+                tempContainer.style.width = '210mm';
+                tempContainer.appendChild(clone);
+                document.body.appendChild(tempContainer);
+
+                const opt = {
+                    margin: [25, 20, 25, 20],
+                    filename: `${sectionName.replace(/\s+/g, '_')}.pdf`,
+                    image: { type: 'jpeg', quality: 0.98 },
+                    html2canvas: {
+                        scale: 2,
+                        useCORS: true,
+                        letterRendering: true,
+                        backgroundColor: '#ffffff',
+                        logging: false
+                    },
+                    jsPDF: {
+                        unit: 'mm',
+                        format: 'a4',
+                        orientation: 'portrait'
+                    },
+                    pagebreak: {
+                        mode: ['avoid-all', 'css', 'legacy'],
+                        before: ['h1'],
+                        after: ['.pdf-page'],
+                        avoid: ['blockquote', '.key-points', '.chart-container']
+                    }
+                };
+
+                // Generate PDF
+                await html2pdf().set(opt).from(clone).save();
+
+                // Clean up
+                document.body.removeChild(tempContainer);
+
+                this.disabled = false;
+                this.innerHTML = '<i class="fas fa-download"></i> PDF 다운로드';
+            } catch (error) {
+                console.error('PDF Error:', error);
+                alert('PDF 생성 중 오류가 발생했습니다.');
+                this.disabled = false;
+                this.innerHTML = '<i class="fas fa-download"></i> PDF 다운로드';
+            }
+        });
+
+        // Initialize charts function (placeholder)
+        function initializeCharts() {
+            // Chart initialization code here
+        }
+
+        // Initialize first section
+        generatePages(0);
+    </script>
+</body>
+</html>
