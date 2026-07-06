@@ -8,7 +8,7 @@
 ## 먼저, 설치 없이 둘러보기 (강력 추천)
 
 **가장 간단한 방법:** 아래 데모 주소를 브라우저에서 바로 여세요 (설치 불필요).
-- 데모: **https://nkmath01.github.io/nk/?demo=1**
+- 데모: **https://yaknon.vercel.app/?demo=1**
 
 또는 `index.html` 파일을 더블클릭해서 브라우저로 연 뒤, 주소창 끝에 **`?demo=1`** 을 붙이고 Enter 하세요.
 예) `file:///C:/.../index.html?demo=1`

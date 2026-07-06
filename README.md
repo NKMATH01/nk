@@ -2,8 +2,8 @@
 
 안산 NK학원 약술형 논술 대비 학습관리 시스템. 단일 HTML 파일 + Supabase로 동작하며, 관리자·학생·학부모 3역할을 지원합니다.
 
-- **배포 주소:** https://nkmath01.github.io/nk/
-- **데모 (설치 불필요):** https://nkmath01.github.io/nk/?demo=1
+- **배포 주소:** https://yaknon.vercel.app/
+- **데모 (설치 불필요):** https://yaknon.vercel.app/?demo=1
 
 ## 주요 기능
 

@@ -4,3 +4,5 @@ PRD_*.md
 docs/
 Thumbs.db
 desktop.ini
+
+.vercel
