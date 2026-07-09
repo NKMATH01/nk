@@ -309,7 +309,7 @@ const WRONG_REASONS = ['조건 해석','계산 실수','개념 누락','풀이 �
 const RUBRIC = ['조건 해석','풀이 과정','최종 답안'];
 const SESSION_KEY = 'nk_yak_session_v2';
 const SESSION_DAYS = 30;
-const TODAY = new Date('2026-07-07T00:00:00');
+const TODAY = new Date(new Date().setHours(0,0,0,0));
 
 /* ═══════════ SVG 아이콘 (Lucide 스타일, 이모지 미사용) ═══════════ */
 const ICONS = {
@@ -591,7 +591,7 @@ const db={
   async setTargets(sid,list){ // list:[{university_id,priority}]
     if(DEMO){store.student_targets=store.student_targets.filter(t=>t.student_id!==sid);
       list.forEach(l=>store.student_targets.push({id:uuid(),student_id:sid,university_id:l.university_id,priority:l.priority}));return;}
-    await sb.from('student_targets').delete().eq('student_id',sid);
+    const del=await sb.from('student_targets').delete().eq('student_id',sid);if(del.error)throw del.error;
     if(list.length){const {error}=await sb.from('student_targets').insert(list.map(l=>({student_id:sid,university_id:l.university_id,priority:l.priority})));if(error)throw error;}},
   async insertSession(s){if(DEMO){const o=Object.assign({id:uuid(),created_at:todayStr()},s);store.test_sessions.push(o);return o;}
     const {data,error}=await sb.from('test_sessions').insert(s).select().single();if(error)throw error;return data;},
@@ -629,7 +629,8 @@ const db={
   async updateAccountPassword(id,hash){if(DEMO)return;const {error}=await sb.from('accounts').update({password_hash:hash}).eq('id',id);if(error)throw error;},
   async upsertAccount(phone,hash,role,sid){if(DEMO)return 'demo';
     const p=normPhone(phone);const ex=await this.getAccountByPhone(p);
-    if(ex){const {error}=await sb.from('accounts').update({password_hash:hash,role,student_id:sid||null}).eq('id',ex.id);if(error)throw error;return 'updated';}
+    if(ex){if(ex.role!==role||(ex.student_id&&sid&&ex.student_id!==sid))throw new Error('이 전화번호는 이미 다른 계정('+ex.role+')에서 사용 중입니다. 다른 번호를 입력하세요.');
+      const {error}=await sb.from('accounts').update({password_hash:hash,role,student_id:sid||null}).eq('id',ex.id);if(error)throw error;return 'updated';}
     const {error}=await sb.from('accounts').insert({phone:p,password_hash:hash,role,student_id:sid||null});if(error)throw error;return 'created';},
 };
 
@@ -895,55 +896,67 @@ async function renderStudents(c){
   });
   renderStuCards(universities);
 }
-async function renderStuCards(universities){
+async function renderStuCards(universities,savedSid){
   const wrap=$('stuCards');const students=await db.listStudents();
-  const uniOpts=universities.map(u=>`<option value="${esc(u.id)}">${esc(u.name)}${u.campus?'('+esc(u.campus)+')':''} · ${esc(u.region)}</option>`).join('');
   const blocks=[];
   for(const s of students){
     const targets=(await db.listTargets(s.id)).sort((a,b)=>a.priority-b.priority);
     const tSummary=targets.length?targets.map(t=>{const u=universities.find(x=>x.id===t.university_id);return u?`${t.priority}지망 ${esc(u.name)}`:'';}).join(' · '):'목표 미설정';
     blocks.push(`<div class="card" data-sid="${esc(s.id)}">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
-        <div><h3 style="margin:0">${esc(s.name)} <span class="chip gray">${esc(s.grade_type)}</span> ${s.status==='퇴원'?'<span class="chip red">퇴원</span>':'<span class="chip green">재원</span>'}</h3>
-          <div class="muted" style="font-size:12px;margin-top:4px">${esc(s.school||'-')} · 내신 ${s.naesin_grade!=null?esc(s.naesin_grade):'-'} · 학부모 ${esc(s.parent_phone||'-')} · 동의일 ${esc(s.consent_date||'-')}</div>
-          <div class="muted" style="font-size:12px;margin-top:2px">${esc(tSummary)}</div></div>
-        <div class="row" style="gap:6px">
-          <select class="e_status field" style="padding:7px 9px;border:1.5px solid var(--line);border-radius:8px"><option ${s.status!=='퇴원'?'selected':''}>재원</option><option ${s.status==='퇴원'?'selected':''}>퇴원</option></select>
-          <button class="btn sm line save_status">상태 저장</button>
-        </div>
+      <div><h3 style="margin:0">${esc(s.name)} <span class="chip gray">${esc(s.grade_type)}</span> ${s.status==='퇴원'?'<span class="chip red">퇴원</span>':'<span class="chip green">재원</span>'}</h3>
+        <div class="muted" style="font-size:12px;margin-top:2px">${esc(tSummary)}</div></div>
+      <div class="divider"></div>
+      <div class="muted" style="font-size:12px;font-weight:700;margin-bottom:6px">기본정보</div>
+      <div class="row">
+        <div class="field"><label>이름 (필수)</label><input class="e_name" value="${esc(s.name||'')}" placeholder="이름"></div>
+        <div class="field"><label>학년</label><select class="e_grade"><option ${s.grade_type!=='N수'?'selected':''}>고3</option><option ${s.grade_type==='N수'?'selected':''}>N수</option></select></div>
+        <div class="field"><label>학교</label><input class="e_school" value="${esc(s.school||'')}" placeholder="예: 상록고"></div>
+        <div class="field"><label>내신등급</label><input class="e_naesin" type="number" step="0.1" min="1" max="9" value="${esc(s.naesin_grade!=null?s.naesin_grade:'')}" placeholder="2.4"></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div class="field"><label>학부모 연락처</label><input class="e_pphone" value="${esc(s.parent_phone||'')}" placeholder="01000000000"></div>
+        <div class="field"><label>개인정보 동의일</label><input class="e_consent" type="date" value="${esc(s.consent_date||'')}"></div>
+        <div class="field"><label>상태</label><select class="e_status"><option ${s.status!=='퇴원'?'selected':''}>재원</option><option ${s.status==='퇴원'?'selected':''}>퇴원</option></select></div>
       </div>
       <div class="divider"></div>
-      <div class="grid2">
-        <div><div class="muted" style="font-size:12px;font-weight:700;margin-bottom:6px">목표 대학 (최대 3, 지망순위)</div>
-          ${[0,1,2].map(i=>{const t=targets[i];const selU=t?t.university_id:'';
-            return `<div class="row" style="margin-bottom:6px"><span class="chip gray">${i+1}지망</span>
-              <select class="t_uni field" data-pri="${i+1}" style="flex:1;padding:7px 9px;border:1.5px solid var(--line);border-radius:8px">
-              <option value="">— 선택 —</option>${universities.map(u=>`<option value="${esc(u.id)}" ${u.id===selU?'selected':''}>${esc(u.name)}${u.campus?'('+esc(u.campus)+')':''}</option>`).join('')}</select></div>`;}).join('')}
-          <button class="btn sm save_targets">${svg('check','xs')}목표대학 저장</button>
-          <div class="msg t_msg"></div>
-        </div>
-        <div><div class="muted" style="font-size:12px;font-weight:700;margin-bottom:6px">로그인 계정</div>
-          <div class="row" style="margin-bottom:8px"><div class="field" style="flex:1"><label>학생 전화번호</label><input class="acc_sphone" value="${esc(s.parent_phone?'':'')}" placeholder="01000000000"></div>
-            <div class="field" style="flex:1"><label>학생 비밀번호</label><input class="acc_spw" type="password" placeholder="4자 이상"></div>
-            <button class="btn sm acc_student">학생계정</button></div>
-          <div class="row"><div class="field" style="flex:1"><label>학부모 전화번호</label><input class="acc_pphone" value="${esc(s.parent_phone||'')}" placeholder="01000000000"></div>
-            <div class="field" style="flex:1"><label>학부모 비밀번호</label><input class="acc_ppw" type="password" placeholder="4자 이상"></div>
-            <button class="btn sm acc_parent">학부모계정</button></div>
-          <div class="msg acc_msg"></div>
-        </div>
+      <div class="muted" style="font-size:12px;font-weight:700;margin-bottom:6px">목표 대학 (최대 3, 지망순위)</div>
+      ${[0,1,2].map(i=>{const t=targets[i];const selU=t?t.university_id:'';
+        return `<div class="row" style="margin-bottom:6px"><span class="chip gray">${i+1}지망</span>
+          <select class="t_uni field" data-pri="${i+1}" style="flex:1;padding:7px 9px;border:1.5px solid var(--line);border-radius:8px">
+          <option value="">— 선택 —</option>${universities.map(u=>`<option value="${esc(u.id)}" ${u.id===selU?'selected':''}>${esc(u.name)}${u.campus?'('+esc(u.campus)+')':''}</option>`).join('')}</select></div>`;}).join('')}
+      <div class="row" style="margin-top:8px"><button class="btn save_all">${svg('check','xs')}저장</button></div>
+      <div class="msg all_msg"></div>
+      <div class="divider"></div>
+      <div><div class="muted" style="font-size:12px;font-weight:700;margin-bottom:6px">로그인 계정</div>
+        <div class="row" style="margin-bottom:8px"><div class="field" style="flex:1"><label>학생 전화번호</label><input class="acc_sphone" placeholder="01000000000"></div>
+          <div class="field" style="flex:1"><label>학생 비밀번호</label><input class="acc_spw" type="password" placeholder="4자 이상"></div>
+          <button class="btn sm acc_student">학생계정</button></div>
+        <div class="row"><div class="field" style="flex:1"><label>학부모 전화번호</label><input class="acc_pphone" value="${esc(s.parent_phone||'')}" placeholder="01000000000"></div>
+          <div class="field" style="flex:1"><label>학부모 비밀번호</label><input class="acc_ppw" type="password" placeholder="4자 이상"></div>
+          <button class="btn sm acc_parent">학부모계정</button></div>
+        <div class="msg acc_msg"></div>
       </div>
     </div>`);
   }
   wrap.innerHTML=blocks.join('')||'<p class="muted">등록된 학생이 없습니다.</p>';
+  if(savedSid){const okCard=wrap.querySelector(`.card[data-sid="${savedSid}"]`);if(okCard){const okMsg=okCard.querySelector('.all_msg');okMsg.className='msg ok';okMsg.textContent='저장되었습니다.';}}
   wrap.querySelectorAll('.card[data-sid]').forEach(card=>{
     const sid=card.dataset.sid;
-    card.querySelector('.save_status').addEventListener('click',async()=>{await db.updateStudent(sid,{status:card.querySelector('.e_status').value});renderStuCards(universities);});
-    card.querySelector('.save_targets').addEventListener('click',async()=>{
-      const m=card.querySelector('.t_msg');m.className='msg';
-      const list=[];const seen=new Set();
-      card.querySelectorAll('.t_uni').forEach(sel=>{if(sel.value){if(seen.has(sel.value)){return;}seen.add(sel.value);list.push({university_id:sel.value,priority:Number(sel.dataset.pri)});}});
-      try{await db.setTargets(sid,list);m.className='msg ok';m.textContent='저장되었습니다.';renderStuCards(universities);}
-      catch(e){m.className='msg err';m.textContent='실패: '+(e?.message||'오류');}
+    card.querySelector('.save_all').addEventListener('click',async()=>{
+      const m=card.querySelector('.all_msg');m.className='msg';m.textContent='';
+      const name=card.querySelector('.e_name').value.trim();
+      if(!name){m.className='msg err';m.textContent='이름을 입력하세요.';return;}
+      const list=[];const seen=new Set();let dup=false;
+      card.querySelectorAll('.t_uni').forEach(sel=>{if(sel.value){if(seen.has(sel.value)){dup=true;return;}seen.add(sel.value);list.push({university_id:sel.value,priority:Number(sel.dataset.pri)});}});
+      if(dup){m.className='msg err';m.textContent='같은 대학을 중복 선택할 수 없습니다.';return;}
+      const naesinV=card.querySelector('.e_naesin').value;
+      try{
+        await db.updateStudent(sid,{name,grade_type:card.querySelector('.e_grade').value,school:card.querySelector('.e_school').value.trim()||null,
+          naesin_grade:naesinV?Number(naesinV):null,parent_phone:normPhone(card.querySelector('.e_pphone').value)||null,
+          consent_date:card.querySelector('.e_consent').value||null,status:card.querySelector('.e_status').value});
+        await db.setTargets(sid,list);
+        renderStuCards(universities,sid);
+      }catch(e){m.className='msg err';m.textContent='저장 실패: '+(e?.message||'오류');}
     });
     const accMsg=card.querySelector('.acc_msg');
     card.querySelector('.acc_student').addEventListener('click',()=>createAcct(card,sid,'student',accMsg));
