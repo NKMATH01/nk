@@ -205,10 +205,13 @@
     .sidebar{position:fixed;left:-260px;transition:left .2s;z-index:40;box-shadow:0 0 40px rgba(0,0,0,.3)}
     .sidebar.open{left:0}
     .menu-toggle{display:inline-flex !important}
+    .side-close{display:block}
     .content{padding:16px}
     .grid2,.grid3{grid-template-columns:1fr}
   }
   .menu-toggle{display:none;background:transparent;border:none;color:var(--ink);padding:4px;margin-right:6px}
+  #sideBackdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:39}
+  .side-close{display:none;background:transparent;border:none;color:var(--side-ink);font-size:18px;margin-left:auto;padding:2px 6px;line-height:1}
 
   @media print{
     .sidebar,.topbar,.demo-strip,.no-print{display:none !important}
@@ -259,6 +262,7 @@
       <div class="brandbox">
         <span class="logo-badge" id="sideLogo"></span>
         <div><b>NK 약술논술</b><small>AI 케어</small></div>
+        <button id="sideClose" class="side-close" aria-label="메뉴 닫기">✕</button>
       </div>
       <nav class="nav" id="navMenu"></nav>
       <div class="side-foot">
@@ -266,6 +270,7 @@
         <button class="logout-btn" id="logoutBtn"><span id="logoutIcon"></span>로그아웃</button>
       </div>
     </aside>
+    <div id="sideBackdrop"></div>
     <main class="main">
       <header class="topbar">
         <div style="display:flex;align-items:center">
@@ -449,13 +454,14 @@ function buildDemoStore(){
   const universities=[
     U('국민대',null,'서울',true,'논술 100%','미반영','요강 확인 필요','국어 단답+수학 서술 12문항','2026-11-22',210,'EBS 수특·수완 기반'),
     U('상명대',null,'서울',false,'논술 70%+내신 30%','30%','요강 확인 필요','국어+수학 10문항','2026-11-29',160,null),
-    U('서경대',null,'서울',true,'논술 100%','미반영','요강 확인 필요','수학 서술 위주 10문항','2026-11-15',120,null),
+    U('서경대',null,'서울',true,'논술 100%','미반영','수능 최저 없음','국어4+수학4 · 60분','2026-11-01',214,'고사장 확인 9/23'),
     U('삼육대',null,'서울',true,'논술 100%','미반영','요강 확인 필요','국어+수학 12문항','2026-12-06',95,null),
-    U('가천대',null,'경기',true,'논술 100%','미반영','요강 확인 필요','국어 단답+수학 15문항','2026-11-28',360,'문항 수 많음'),
+    U('가천대','자연','경기',true,'논술 100%','미반영','수능 1개 영역 3등급 이내(1합3)','국어5+수학8 · 80분','2026-12-01',1036,'고사장 확인 11/17 · 모집 1036명은 인문·자연 합계'),
+    U('가천대','인문','경기',true,'논술 100%','미반영','수능 1개 영역 3등급 이내(1합3)','국어8+수학5 · 80분','2026-11-30',1036,'고사장 확인 11/17 · 모집 1036명은 인문·자연 합계'),
     U('강남대',null,'경기',false,'논술 60%+내신 40%','40%','요강 확인 필요','국어+수학 10문항','2026-11-21',110,null),
-    U('수원대',null,'경기',false,'논술 70%+내신 30%','30%','요강 확인 필요','수학 서술 12문항','2026-11-22',180,null),
+    U('수원대',null,'경기',false,'논술 75%+교과 25%','교과 25%','수능 2개 영역 합 7 이내(2합7)','인문 국어10+수학5 / 자연 국어5+수학10','2026-11-21',434,'자연 11/21 · 인문 11/22'),
     U('신한대',null,'경기',false,'논술 60%+내신 40%','40%','요강 확인 필요','국어+수학 10문항','2026-11-15',90,null),
-    U('을지대',null,'경기',false,'논술 70%+내신 30%','30%','요강 확인 필요','수학 중심 10문항','2026-12-05',70,null),
+    U('을지대',null,'경기',false,'논술 80%+교과 20%','교과 20%','수능 최저 없음','국어7+수학7 · 70분','2026-10-16',251,'고사장 확인 10/12 · 세부 인원 요강 재확인 필요'),
     U('한국공학대',null,'경기',false,'논술 70%+내신 30%','30%','요강 확인 필요','수학 서술 12문항','2026-11-29',130,null),
     U('한국외대','글로벌','경기',true,'논술 100%','미반영','요강 확인 필요','국어+수학 10문항','2026-11-22',150,'글로벌캠퍼스'),
     U('한신대',null,'경기',false,'논술 60%+내신 40%','40%','요강 확인 필요','국어+수학 10문항','2026-11-28',80,null),
@@ -543,11 +549,11 @@ function buildDemoStore(){
   students.forEach((st,si)=>{
     counseling_notes.push({id:uuid(),student_id:st.id,note_date:'2026-05-18',category:'정기상담',
       content:(si===0?'9월 모평 목표 상담. 수학 취약 단원 삼각함수(활용) 집중 보완 합의. 주 2회 활용형 클리닉 배정.':'중간 점검 상담. 목표 대학 대비 학습 페이스 양호. 첨삭 서술 근거 강화 목표 공유.'),
-      follow_up:(si===0?'학부모께 주간 리포트 링크 안내 예정':null),created_at:'2026-05-18'});
+      follow_up:(si===0?'학부모께 주간 리포트 링크 안내 예정':null),visible_to_student:true,created_at:'2026-05-18'});
     if(si%2===0)counseling_notes.push({id:uuid(),student_id:st.id,note_date:'2026-06-15',category:'학부모상담',
-      content:'학부모 대면 상담. 최근 성적 추이와 첨삭 방향 공유. 가정 학습 시간 조정 요청.',follow_up:'다음 달 재상담 일정 조율',created_at:'2026-06-15'});
+      content:'학부모 대면 상담. 최근 성적 추이와 첨삭 방향 공유. 가정 학습 시간 조정 요청.',follow_up:'다음 달 재상담 일정 조율',visible_to_student:false,created_at:'2026-06-15'});
     if(si===0)counseling_notes.push({id:uuid(),student_id:st.id,note_date:'2026-06-30',category:'진로·지원상담',
-      content:'논술 100% 대학 위주 지원 전략 논의(국민대·가천대·서경대). 내신 부담 낮은 라인업 확정.',follow_up:'모집요강 확정 후 최저 재확인',created_at:'2026-06-30'});
+      content:'논술 100% 대학 위주 지원 전략 논의(국민대·가천대·서경대). 내신 부담 낮은 라인업 확정.',follow_up:'모집요강 확정 후 최저 재확인',visible_to_student:false,created_at:'2026-06-30'});
   });
 
   return {students,universities,student_targets,test_sessions,questions,scores,homework_records,essay_gradings,teacher_comments,counseling_notes,accounts:[]};
@@ -581,6 +587,7 @@ const db={
     return await sbq(sb.from('teacher_comments').select('*').eq('student_id',sid).eq('week_no',weekNo).maybeSingle(),'코멘트 조회',null);},
   async getAccountByPhone(phone){if(DEMO)return store.accounts.find(a=>a.phone===normPhone(phone))||null;
     const {data,error}=await sb.from('accounts').select('*').eq('phone',normPhone(phone)).maybeSingle();if(error)throw error;return data;},
+  async listAccountsByStudent(sid){if(DEMO)return store.accounts.filter(a=>a.student_id===sid);return await sbq(sb.from('accounts').select('id,phone,role').eq('student_id',sid),'계정 조회',[]);},
 
   async insertStudent(s){if(DEMO){const o=Object.assign({id:uuid(),created_at:todayStr()},s);store.students.push(o);return o;}
     const {data,error}=await sb.from('students').insert(s).select().single();if(error)throw error;return data;},
@@ -721,6 +728,7 @@ const ADMIN_MENU=[
 ];
 const STUDENT_MENU=[
   {id:'s_report',label:'내 리포트',icon:'file'},
+  {id:'s_counsel',label:'상담 내역',icon:'chat'},
   {id:'s_diagnosis',label:'취약 진단',icon:'activity'},
   {id:'s_essays',label:'첨삭 이력',icon:'pen'},
   {id:'s_targets',label:'목표 대학',icon:'target'},
@@ -746,7 +754,7 @@ async function enterApp(role,studentId){
   const menu=menuFor(role);
   $('navMenu').innerHTML=menu.map(m=>m.grp?`<div class="grp">${esc(m.grp)}</div>`:
     `<button data-tab="${m.id}">${svg(m.icon)}${esc(m.label)}</button>`).join('');
-  $('navMenu').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{navigate(b.dataset.tab);$('sidebar').classList.remove('open');}));
+  $('navMenu').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{navigate(b.dataset.tab);setSide(false);}));
   navigate(menu.find(m=>m.id).id);
 }
 async function studentName(sid){const s=(await db.listStudents()).find(x=>x.id===sid);return s?s.name:'학생';}
@@ -766,7 +774,7 @@ function navigate(tab){
   const c=$('tabContent');c.innerHTML='<p class="muted">불러오는 중...</p>';
   const R={dashboard:renderDashboard,students:renderStudents,counsel:renderCounseling,tests:renderTests,hwcheck:renderHomeworkCheck,diagnosis:renderDiagnosis,
     essays:renderEssays,admission:renderAdmission,report:renderReport,universities:renderUniversities,settings:renderSettings,
-    s_report:renderReport,s_diagnosis:renderDiagnosis,s_essays:renderEssays,s_targets:renderStudentTargets};
+    s_report:renderReport,s_counsel:renderStudentCounsel,s_diagnosis:renderDiagnosis,s_essays:renderEssays,s_targets:renderStudentTargets};
   (R[tab]||(x=>x.innerHTML='<p class="muted">준비 중</p>'))(c);
 }
 
@@ -901,6 +909,7 @@ async function renderStuCards(universities,savedSid){
   const blocks=[];
   for(const s of students){
     const targets=(await db.listTargets(s.id)).sort((a,b)=>a.priority-b.priority);
+    const accs=await db.listAccountsByStudent(s.id);const sAcc=accs.find(a=>a.role==='student');const pAcc=accs.find(a=>a.role==='parent');
     const tSummary=targets.length?targets.map(t=>{const u=universities.find(x=>x.id===t.university_id);return u?`${t.priority}지망 ${esc(u.name)}`:'';}).join(' · '):'목표 미설정';
     blocks.push(`<div class="card" data-sid="${esc(s.id)}">
       <div><h3 style="margin:0">${esc(s.name)} <span class="chip gray">${esc(s.grade_type)}</span> ${s.status==='퇴원'?'<span class="chip red">퇴원</span>':'<span class="chip green">재원</span>'}</h3>
@@ -928,10 +937,11 @@ async function renderStuCards(universities,savedSid){
       <div class="msg all_msg"></div>
       <div class="divider"></div>
       <div><div class="muted" style="font-size:12px;font-weight:700;margin-bottom:6px">로그인 계정</div>
-        <div class="row" style="margin-bottom:8px"><div class="field" style="flex:1"><label>학생 전화번호</label><input class="acc_sphone" placeholder="01000000000"></div>
+        <div class="muted" style="font-size:11.5px;margin-bottom:6px">계정은 전화번호+비밀번호 입력 후 [학생계정]/[학부모계정] 버튼으로 저장됩니다. 위 [저장] 버튼과는 별개입니다. 비밀번호는 변경할 때만 입력하세요.</div>
+        <div class="row" style="margin-bottom:8px"><div class="field" style="flex:1"><label>학생 전화번호 ${sAcc?'<span class="chip green" style="font-size:10px">계정 있음</span>':''}</label><input class="acc_sphone" value="${esc(sAcc?sAcc.phone:'')}" placeholder="01000000000"></div>
           <div class="field" style="flex:1"><label>학생 비밀번호</label><input class="acc_spw" type="password" placeholder="4자 이상"></div>
           <button class="btn sm acc_student">학생계정</button></div>
-        <div class="row"><div class="field" style="flex:1"><label>학부모 전화번호</label><input class="acc_pphone" value="${esc(s.parent_phone||'')}" placeholder="01000000000"></div>
+        <div class="row"><div class="field" style="flex:1"><label>학부모 전화번호 ${pAcc?'<span class="chip green" style="font-size:10px">계정 있음</span>':''}</label><input class="acc_pphone" value="${esc(pAcc?pAcc.phone:(s.parent_phone||''))}" placeholder="01000000000"></div>
           <div class="field" style="flex:1"><label>학부모 비밀번호</label><input class="acc_ppw" type="password" placeholder="4자 이상"></div>
           <button class="btn sm acc_parent">학부모계정</button></div>
         <div class="msg acc_msg"></div>
@@ -1241,7 +1251,7 @@ async function renderCounseling(c){
   const editing=counselEdit?notes.find(n=>n.id===counselEdit):null;
 
   const timeline=notes.length?notes.map(n=>`<div class="timeline-item">
-      <div class="th"><div><span class="chip ${COUNSEL_CLS[n.category]||'gray'}">${esc(n.category)}</span> <span class="muted" style="font-size:12px;margin-left:6px">${esc(fmtDate(n.note_date))}</span></div>
+      <div class="th"><div><span class="chip ${COUNSEL_CLS[n.category]||'gray'}">${esc(n.category)}</span> <span class="muted" style="font-size:12px;margin-left:6px">${esc(fmtDate(n.note_date))}</span>${n.visible_to_student?' <span class="chip green">학생 공개</span>':''}</div>
         <div><button class="btn line sm cn_edit" data-id="${esc(n.id)}">수정</button> <button class="btn danger sm cn_del" data-id="${esc(n.id)}">삭제</button></div></div>
       <div style="font-size:13.5px;white-space:pre-wrap;line-height:1.6">${esc(n.content)}</div>
       ${n.follow_up?`<div style="margin-top:8px;padding:8px 10px;background:var(--bg);border-radius:8px;font-size:12.5px"><b>후속 조치</b> · ${esc(n.follow_up)}</div>`:''}
@@ -1256,6 +1266,7 @@ async function renderCounseling(c){
       </div>
       <div class="field" style="margin-top:8px"><label>상담 내용</label><textarea id="cn_content" rows="3" style="padding:9px 11px;border:1.5px solid var(--line);border-radius:9px">${editing?esc(editing.content):''}</textarea></div>
       <div class="field"><label>후속 조치(선택)</label><textarea id="cn_follow" rows="2" style="padding:9px 11px;border:1.5px solid var(--line);border-radius:9px">${editing&&editing.follow_up?esc(editing.follow_up):''}</textarea></div>
+      <div class="field" style="margin-top:2px"><label style="display:flex;align-items:center;gap:7px;cursor:pointer"><input type="checkbox" id="cn_visible" ${editing&&editing.visible_to_student?'checked':''}> 학생에게 공개</label></div>
       <button class="btn" id="cn_save">${svg('check','sm')}${editing?'수정 저장':'기록 저장'}</button>
       ${editing?'<button class="btn line" id="cn_cancel">취소</button>':''}
       <div id="cn_msg" class="msg"></div>
@@ -1267,7 +1278,7 @@ async function renderCounseling(c){
     const m=$('cn_msg');m.className='msg';m.textContent='';
     const content=$('cn_content').value.trim();
     if(!content){m.className='msg err';m.textContent='상담 내용을 입력하세요.';return;}
-    const payload={note_date:$('cn_date').value,category:$('cn_cat').value,content,follow_up:$('cn_follow').value.trim()||null};
+    const payload={note_date:$('cn_date').value,category:$('cn_cat').value,content,follow_up:$('cn_follow').value.trim()||null,visible_to_student:$('cn_visible').checked};
     try{if(editing){await db.updateCounseling(editing.id,payload);counselEdit=null;}
       else{await db.insertCounseling(Object.assign({student_id:sid},payload));}
       m.className='msg ok';m.textContent='저장되었습니다.';renderCounseling(c);}
@@ -1277,6 +1288,17 @@ async function renderCounseling(c){
   c.querySelectorAll('.cn_edit').forEach(b=>b.addEventListener('click',()=>{counselEdit=b.dataset.id;renderCounseling(c);}));
   c.querySelectorAll('.cn_del').forEach(b=>b.addEventListener('click',async()=>{
     try{await db.deleteCounseling(b.dataset.id);if(counselEdit===b.dataset.id)counselEdit=null;renderCounseling(c);}catch(e){alert('삭제 실패: '+(e?.message||'오류'));}}));
+}
+// 학생 화면: 공개된 상담 내역만 읽기 전용 표시
+async function renderStudentCounsel(c){
+  const sid=cur.studentId;if(!sid){c.innerHTML='<p class="muted">학생 정보를 찾을 수 없습니다.</p>';return;}
+  const notes=(await db.listCounseling(sid)).filter(n=>n.visible_to_student);
+  const list=notes.length?notes.map(n=>`<div class="timeline-item">
+      <div class="th"><div><span class="chip ${COUNSEL_CLS[n.category]||'gray'}">${esc(n.category)}</span> <span class="muted" style="font-size:12px;margin-left:6px">${esc(fmtDate(n.note_date))}</span></div></div>
+      <div style="font-size:13.5px;white-space:pre-wrap;line-height:1.6">${esc(n.content)}</div>
+      ${n.follow_up?`<div style="margin-top:8px;padding:8px 10px;background:var(--bg);border-radius:8px;font-size:12.5px"><b>후속</b> · ${esc(n.follow_up)}</div>`:''}
+    </div>`).join(''):'<p class="muted">공개된 상담 내역이 없습니다.</p>';
+  c.innerHTML=`<div class="card"><h3>${svg('chat')}상담 내역</h3>${list}</div>`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1627,7 +1649,10 @@ $('loginBtn').addEventListener('click',doLogin);
 $('loginPw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 $('loginPhone').addEventListener('keydown',e=>{if(e.key==='Enter')$('loginPw').focus();});
 $('logoutBtn').addEventListener('click',doLogout);
-$('menuToggle').addEventListener('click',()=>$('sidebar').classList.toggle('open'));
+function setSide(open){$('sidebar').classList.toggle('open',open);$('sideBackdrop').style.display=open?'block':'none';}
+$('menuToggle').addEventListener('click',()=>setSide(!$('sidebar').classList.contains('open')));
+$('sideClose').addEventListener('click',()=>setSide(false));
+$('sideBackdrop').addEventListener('click',()=>setSide(false));
 
 (async function boot(){
   const params=new URLSearchParams(location.search);
