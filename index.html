@@ -585,6 +585,8 @@ const db={
     return await sbq(sb.from('essay_gradings').select('*').eq('student_id',sid).order('week_date',{ascending:false}),'첨삭 조회',[]);},
   async getTeacherComment(sid,weekNo){if(DEMO)return store.teacher_comments.find(t=>t.student_id===sid&&t.week_no===weekNo)||null;
     return await sbq(sb.from('teacher_comments').select('*').eq('student_id',sid).eq('week_no',weekNo).maybeSingle(),'코멘트 조회',null);},
+  async listTeacherComments(sid){if(DEMO)return store.teacher_comments.filter(t=>t.student_id===sid).slice().sort((a,b)=>b.week_no-a.week_no);
+    return await sbq(sb.from('teacher_comments').select('*').eq('student_id',sid).order('week_no',{ascending:false}),'코멘트 조회',[]);},
   async getAccountByPhone(phone){if(DEMO)return store.accounts.find(a=>a.phone===normPhone(phone))||null;
     const {data,error}=await sb.from('accounts').select('*').eq('phone',normPhone(phone)).maybeSingle();if(error)throw error;return data;},
   async listAccountsByStudent(sid){if(DEMO)return store.accounts.filter(a=>a.student_id===sid);return await sbq(sb.from('accounts').select('id,phone,role').eq('student_id',sid),'계정 조회',[]);},
@@ -663,7 +665,7 @@ async function studentBundle(sid,ctx){
   const weeklyPercents=sessArr.map(s=>{const denom=s.total||s.pts||0;return denom>0?clamp(s.earned/denom*100):0;});
   // 문항 레코드(단원/사고/배점/득점)
   const questionRecords=scores.map(sc=>{const q=qById[sc.question_id];if(!q)return null;
-    return {unit:q.unit,cognition:q.cognition,points:Number(q.points)||0,earned:Number(sc.earned)||0,week:sessById[q.session_id]?.week_no,session_id:q.session_id,wrong_reason:sc.wrong_reason};
+    return {unit:q.unit,cognition:q.cognition,points:Number(q.points)||0,earned:Number(sc.earned)||0,week:sessById[q.session_id]?.week_no,session_id:q.session_id,wrong_reason:sc.wrong_reason,no:q.no,reason_note:sc.reason_note,photo_url:sc.photo_url};
   }).filter(Boolean);
   const essayInputs=essays.map(e=>({earned:(e.cond_earned||0)+(e.proc_earned||0)+(e.ans_earned||0),max:(e.cond_max||0)+(e.proc_max||0)+(e.ans_max||0)}));
   return {scores,homeworks,essays,perSession:sessArr,weeklyPercents,questionRecords,essayInputs,rawEssays:essays};
@@ -721,7 +723,7 @@ const ADMIN_MENU=[
   {id:'essays',label:'첨삭 관리',icon:'pen'},
   {grp:'분석'},
   {id:'admission',label:'합격 가능성',icon:'trending'},
-  {id:'report',label:'주간 리포트',icon:'file'},
+  {id:'report',label:'진행 현황 리포트',icon:'file'},
   {id:'universities',label:'대학 정보',icon:'building'},
   {grp:'기타'},
   {id:'settings',label:'설정',icon:'settings'},
@@ -1098,9 +1100,9 @@ async function renderScoreGrid(body,c){
 
   const head=`<thead><tr><th class="corner">학생 \\ 문항</th>${questions.map(q=>`<th><span class="qno">${q.no}</span><span class="qmeta">${esc(q.unit.slice(0,4))}·${esc(q.cognition)}</span><span class="qmeta">${q.points}점</span></th>`).join('')}<th class="corner" style="left:auto;position:sticky;right:0">합계</th></tr></thead>`;
   const rowsHTML=students.map((st,ri)=>`<tr><th class="stu">${esc(st.name)}</th>${questions.map((q,ci)=>{
-    const sc=scMap[q.id+'|'+st.id];const val=sc?sc.earned:'';const tag=sc&&sc.wrong_reason?sc.wrong_reason:'';
-    return `<td class="scell" data-r="${ri}" data-c="${ci}" data-q="${esc(q.id)}" data-s="${esc(st.id)}" data-max="${q.points}">
-      ${tag?'<span class="tagdot" title="'+esc(tag)+'"></span>':''}
+    const sc=scMap[q.id+'|'+st.id];const val=sc?sc.earned:'';const tag=sc&&sc.wrong_reason?sc.wrong_reason:'';const note=sc&&sc.reason_note?sc.reason_note:'';const photo=sc&&sc.photo_url?sc.photo_url:'';
+    return `<td class="scell" data-r="${ri}" data-c="${ci}" data-q="${esc(q.id)}" data-s="${esc(st.id)}" data-max="${q.points}" data-tag="${esc(tag)}" data-note="${esc(note)}" data-photo="${esc(photo)}">
+      ${tag||note||photo?'<span class="tagdot" title="'+esc(tag||'메모/사진')+'"></span>':''}
       <input type="number" min="0" max="${q.points}" value="${val}" data-r="${ri}" data-c="${ci}">
       <button class="tagbtn" title="오답원인 태그">${svg('tag','xs')}</button></td>`;}).join('')}<td class="rowtot" data-rowtot="${ri}">0</td></tr>`).join('');
   const footHTML=`<tfoot><tr><th class="corner">문항 정답률</th>${questions.map((q,ci)=>`<td data-colrate="${ci}">-</td>`).join('')}<td></td></tr></tfoot>`;
@@ -1157,22 +1159,59 @@ async function renderScoreGrid(body,c){
   });
 }
 function openTagMenu(td){
-  // 기존 태그 초기값
-  const current=td.dataset.tag||'';
-  const menu=document.createElement('div');
-  menu.style.cssText='position:fixed;z-index:100;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:6px;min-width:150px';
-  menu.innerHTML=['(없음)',...WRONG_REASONS].map(r=>`<button class="btn line sm" style="display:block;width:100%;margin:3px 0;text-align:left;${(r===current||(r==='(없음)'&&!current))?'border-color:var(--purple)':''}" data-r="${r==='(없음)'?'':esc(r)}">${esc(r)}</button>`).join('');
-  const rect=td.getBoundingClientRect();menu.style.left=Math.min(rect.left,window.innerWidth-170)+'px';menu.style.top=(rect.bottom+4)+'px';
-  document.body.appendChild(menu);
-  const close=()=>{menu.remove();document.removeEventListener('click',out,true);};
-  const out=e=>{if(!menu.contains(e.target)){close();}};
-  setTimeout(()=>document.addEventListener('click',out,true),0);
-  menu.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
-    const val=b.dataset.r;td.dataset.tag=val;
-    let dot=td.querySelector('.tagdot');
-    if(val){if(!dot){dot=document.createElement('span');dot.className='tagdot';td.appendChild(dot);}dot.title=val;}
-    else if(dot){dot.remove();}
-    close();}));
+  const curTag=td.dataset.tag||'',curNote=td.dataset.note||'',curPhoto=td.dataset.photo||'';
+  let selTag=curTag,removePhoto=false;
+  const panel=document.createElement('div');
+  panel.style.cssText='position:fixed;z-index:100;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:12px;width:280px;max-height:80vh;overflow:auto';
+  panel.innerHTML=`
+    <div style="font-size:12px;font-weight:700;margin-bottom:6px">오답 원인</div>
+    <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">
+      ${['(없음)',...WRONG_REASONS].map(r=>{const v=(r==='(없음)'?'':r);return `<button type="button" class="btn line sm tm_tag" data-r="${esc(v)}" style="${v===selTag?'border-color:var(--purple);color:var(--purple)':''}">${esc(r)}</button>`;}).join('')}
+    </div>
+    <div style="font-size:12px;font-weight:700;margin-bottom:4px">강사 메모</div>
+    <textarea class="tm_note" rows="2" style="width:100%;padding:8px;border:1.5px solid var(--line);border-radius:8px;margin-bottom:10px" placeholder="감점 사유·피드백">${esc(curNote)}</textarea>
+    <div style="font-size:12px;font-weight:700;margin-bottom:4px">사진 첨부</div>
+    <div class="tm_photo" style="margin-bottom:8px">${curPhoto?`<div><a href="${esc(curPhoto)}" target="_blank"><img src="${esc(curPhoto)}" style="height:60px;border-radius:6px"></a> <button type="button" class="btn danger sm tm_rmphoto">사진 삭제</button></div>`:''}</div>
+    <input type="file" class="tm_file" accept="image/*" style="font-size:12px;margin-bottom:10px">
+    <div style="display:flex;gap:6px;justify-content:flex-end"><button type="button" class="btn line sm tm_close">닫기</button><button type="button" class="btn sm tm_save">저장</button></div>
+    <div class="tm_msg msg" style="margin-top:6px"></div>`;
+  const rect=td.getBoundingClientRect();panel.style.left=Math.min(rect.left,window.innerWidth-300)+'px';panel.style.top=Math.min(rect.bottom+4,window.innerHeight-220)+'px';
+  document.body.appendChild(panel);
+  const close=()=>{panel.remove();document.removeEventListener('mousedown',out,true);};
+  const out=e=>{if(!panel.contains(e.target))close();};
+  setTimeout(()=>document.addEventListener('mousedown',out,true),0);
+  panel.querySelectorAll('.tm_tag').forEach(b=>b.addEventListener('click',()=>{selTag=b.dataset.r;
+    panel.querySelectorAll('.tm_tag').forEach(x=>x.style.cssText='');b.style.cssText='border-color:var(--purple);color:var(--purple)';}));
+  panel.querySelector('.tm_rmphoto')?.addEventListener('click',()=>{removePhoto=true;panel.querySelector('.tm_photo').innerHTML='<span class="muted" style="font-size:12px">사진을 삭제합니다(저장 시 반영).</span>';});
+  panel.querySelector('.tm_close').addEventListener('click',close);
+  panel.querySelector('.tm_save').addEventListener('click',async()=>{
+    const m=panel.querySelector('.tm_msg');m.className='tm_msg msg';m.textContent='';
+    const inp=td.querySelector('input');const v=inp.value;
+    if(v===''||isNaN(Number(v))){m.className='tm_msg msg err';m.textContent='점수를 먼저 입력하세요.';return;}
+    const earned=Number(v);const note=panel.querySelector('.tm_note').value.trim()||null;
+    const file=panel.querySelector('.tm_file').files[0];
+    let photoUrl=removePhoto?null:(curPhoto||null),demoPhoto=false;
+    if(file){
+      if(DEMO){demoPhoto=true;}
+      else{
+        if(file.size>5*1024*1024){m.className='tm_msg msg err';m.textContent='사진은 5MB 이하만 첨부할 수 있습니다.';return;}
+        m.textContent='업로드 중...';
+        try{const ext=(file.name.split('.').pop()||'jpg').toLowerCase();
+          const path='q'+td.dataset.q+'_s'+td.dataset.s+'_'+Date.now()+'.'+ext;
+          const up=await sb.storage.from('grading-photos').upload(path,file);if(up.error)throw up.error;
+          photoUrl=sb.storage.from('grading-photos').getPublicUrl(path).data.publicUrl;
+        }catch(e){m.className='tm_msg msg err';m.textContent='사진 업로드 실패: '+(e?.message||'오류');return;}
+      }
+    }
+    try{await db.saveScores([{question_id:td.dataset.q,student_id:td.dataset.s,earned,wrong_reason:selTag||null,reason_note:note,photo_url:photoUrl}]);
+      td.dataset.tag=selTag||'';td.dataset.note=note||'';td.dataset.photo=photoUrl||'';
+      let dot=td.querySelector('.tagdot');const hasMark=selTag||note||photoUrl;
+      if(hasMark){if(!dot){dot=document.createElement('span');dot.className='tagdot';td.appendChild(dot);}dot.title=selTag||'메모/사진';}
+      else if(dot)dot.remove();
+      if(demoPhoto){m.className='tm_msg msg ok';m.textContent='데모 모드에서는 사진이 저장되지 않습니다. (메모·태그는 반영)';}
+      else close();
+    }catch(e){m.className='tm_msg msg err';m.textContent='저장 실패: '+(e?.message||'오류');}
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1201,18 +1240,26 @@ async function renderHomeworkCheck(c){
         <div class="field"><label>맞은 문항 수</label><input id="hw_correct" type="number" min="0" placeholder="예: 18"></div>
         <div class="field"><label>걸린 시간(분)</label><input id="hw_time" type="number" min="0" placeholder="예: 45"></div>
       </div>
+      <div class="row" style="margin-top:8px">
+        <div class="field" style="flex:2"><label>교재명(선택)</label><input id="hw_book" placeholder="예: 수능특강 수학Ⅰ"></div>
+        <div class="field"><label>시작 페이지</label><input id="hw_pfrom" type="number" min="0" placeholder="예: 12"></div>
+        <div class="field"><label>끝 페이지</label><input id="hw_pto" type="number" min="0" placeholder="예: 20"></div>
+      </div>
       <div class="field" style="margin-top:8px"><label>메모(선택)</label><input id="hw_memo" placeholder="특이사항"></div>
       <button class="btn" id="hw_add">${svg('check','sm')}기록 저장</button><div id="hw_msg" class="msg"></div>
     </div>
     <div class="card"><h3>${svg('clock')}점검 기록 (최신순)</h3>
-      <div style="overflow-x:auto"><table><thead><tr><th>날짜</th><th>채점 결과</th><th class="num">걸린 시간</th><th class="num">문항당 평균</th><th>메모</th><th></th></tr></thead><tbody>
+      <div style="overflow-x:auto"><table><thead><tr><th>날짜</th><th>교재(페이지)</th><th>채점 결과</th><th class="num">걸린 시간</th><th class="num">문항당 평균</th><th>메모</th><th></th></tr></thead><tbody>
       ${recs.length?recs.map(h=>{const t=Number(h.problems_total)||0,cc=Number(h.problems_correct)||0;const pct=t>0?Math.round(cc/t*100):0;
         const per=(t>0&&h.time_min!=null&&h.time_min!=='')?r1(Number(h.time_min)/t):null;
-        return `<tr><td>${esc(fmtDate(h.week_date))}</td><td><b>${cc}/${t}</b> <span class="muted">(${pct}%)</span></td>
+        const pgFrom=h.page_from!=null&&h.page_from!==''?h.page_from:null,pgTo=h.page_to!=null&&h.page_to!==''?h.page_to:null;
+        const pg=(pgFrom!=null||pgTo!=null)?'p'+(pgFrom!=null?pgFrom:'')+'~p'+(pgTo!=null?pgTo:''):'';
+        const bookLabel=h.book?esc(h.book)+(pg?' ('+pg+')':''):(pg||'-');
+        return `<tr><td>${esc(fmtDate(h.week_date))}</td><td class="muted">${bookLabel}</td><td><b>${cc}/${t}</b> <span class="muted">(${pct}%)</span></td>
           <td class="num">${h.time_min!=null&&h.time_min!==''?esc(h.time_min)+'분':'-'}</td>
           <td class="num">${per==null?'-':per+'분'}</td>
           <td class="muted">${esc(h.memo||'-')}</td>
-          <td><button class="btn danger sm hw_del" data-id="${esc(h.id)}">${svg('trash','xs')}</button></td></tr>`;}).join(''):'<tr><td colspan="6" class="muted">기록이 없습니다.</td></tr>'}
+          <td><button class="btn danger sm hw_del" data-id="${esc(h.id)}">${svg('trash','xs')}</button></td></tr>`;}).join(''):'<tr><td colspan="7" class="muted">기록이 없습니다.</td></tr>'}
       </tbody></table></div></div>`;
   bindStudentSelector(()=>renderHomeworkCheck(c));
   if(trend.length&&typeof Chart!=='undefined'){
@@ -1229,7 +1276,8 @@ async function renderHomeworkCheck(c){
     if($('hw_correct').value===''||isNaN(correct)||correct<0){m.className='msg err';m.textContent='맞은 문항 수를 입력하세요.';return;}
     if(correct>total){m.className='msg err';m.textContent='맞은 개수는 전체 문항 수를 넘을 수 없습니다.';return;}
     let time=null;if(timeRaw!==''){time=Number(timeRaw);if(isNaN(time)||time<0){m.className='msg err';m.textContent='걸린 시간은 0 이상이어야 합니다.';return;}}
-    try{await db.insertHomework({student_id:sid,week_date:date,problems_total:total,problems_correct:correct,time_min:time,memo:$('hw_memo').value.trim()||null});
+    const book=$('hw_book').value.trim()||null;const pf=$('hw_pfrom').value!==''?Number($('hw_pfrom').value):null;const pt=$('hw_pto').value!==''?Number($('hw_pto').value):null;
+    try{await db.insertHomework({student_id:sid,week_date:date,problems_total:total,problems_correct:correct,time_min:time,memo:$('hw_memo').value.trim()||null,book,page_from:pf,page_to:pt});
       m.className='msg ok';m.textContent='저장되었습니다.';renderHomeworkCheck(c);}
     catch(e){m.className='msg err';m.textContent='실패: '+(e?.message||'오류');}
   });
@@ -1378,7 +1426,21 @@ async function renderEssays(c){
       ${items.map(([l,ev,mv])=>{const p=mv>0?Math.round(ev/mv*100):0;return `<div class="hbar-row"><span>${esc(l)}</span><div class="bar-track"><div class="bar-fill" style="width:${p}%"></div></div><span class="num">${ev}/${mv}</span></div>`;}).join('')}
       ${e.comment?`<div class="muted" style="font-size:12.5px;margin-top:8px;padding:8px;background:var(--bg);border-radius:8px">${esc(e.comment)}</div>`:''}</div>`;}).join(''):'<p class="muted">첨삭 기록이 없습니다.</p>';
 
-  c.innerHTML=await studentSelector()+form+`<div class="card"><h3>${svg('clock')}첨삭 이력 (최신순)</h3>${timeline}</div>`;
+  let wrongCard='';
+  if(readonly){
+    const ctx=await loadContext();const b=await studentBundle(sid,ctx);
+    const byWeek={};b.questionRecords.filter(r=>r.earned<r.points).forEach(r=>{const w=r.week||0;(byWeek[w]=byWeek[w]||[]).push(r);});
+    const wks=Object.keys(byWeek).map(Number).sort((a,b)=>b-a);
+    const inner=wks.length?wks.map(w=>`<div style="margin-bottom:10px"><div class="muted" style="font-size:12px;font-weight:700;margin-bottom:4px">${w}주차</div>
+      ${byWeek[w].sort((a,b)=>(a.no||0)-(b.no||0)).map(r=>`<div class="timeline-item" style="padding:10px;margin-bottom:8px">
+        <div style="font-size:13px"><b>${esc(String(r.no||'-'))}번</b> · ${esc(r.unit)}·${esc(r.cognition)} <span class="muted">(${r.earned}/${r.points}점)</span> ${r.wrong_reason?`<span class="chip amber">${esc(r.wrong_reason)}</span>`:''}</div>
+        ${r.reason_note?`<div class="muted" style="font-size:12.5px;margin-top:6px;padding:8px;background:var(--bg);border-radius:8px">${esc(r.reason_note)}</div>`:''}
+        ${r.photo_url?`<div style="margin-top:6px"><a href="${esc(r.photo_url)}" target="_blank"><img src="${esc(r.photo_url)}" style="max-height:100px;border-radius:6px"></a></div>`:''}
+      </div>`).join('')}</div>`).join(''):'<p class="muted">감점된 문항이 없습니다.</p>';
+    wrongCard=`<div class="card"><h3>${svg('activity')}주간테스트 오답 노트</h3>${inner}</div>`;
+  }
+
+  c.innerHTML=await studentSelector()+form+`<div class="card"><h3>${svg('clock')}첨삭 이력 (최신순)</h3>${timeline}</div>`+wrongCard;
   bindStudentSelector(()=>renderEssays(c));
   if(!readonly){
     $('es_add').addEventListener('click',async()=>{
@@ -1443,38 +1505,38 @@ async function renderAdmission(c){
    ═══════════════════════════════════════════════════════════════════ */
 async function renderReport(c){
   const readonly=cur.role==='student';
-  c.innerHTML=await studentSelector()+'<p class="muted">불러오는 중...</p>';bindStudentSelector(()=>renderReport(c));
+  c.innerHTML=(readonly?'':await studentSelector())+'<p class="muted">불러오는 중...</p>';bindStudentSelector(()=>renderReport(c));
   const sid=cur.studentId;if(!sid){c.querySelector('p').textContent='학생을 선택하세요.';return;}
   const ctx=await loadContext();const b=await studentBundle(sid,ctx);const st=ctx.students.find(s=>s.id===sid);
   const weeks=b.perSession.map(s=>s.week);
-  const selWeek=(state.reportWeek&&weeks.includes(state.reportWeek))?state.reportWeek:(weeks.at(-1)||null);
-  const weekSel=`<div class="selectbar"><label>주차</label><select id="wkSel">${weeks.length?weeks.map(w=>`<option value="${w}" ${w===selWeek?'selected':''}>${w}주차</option>`).join(''):'<option>-</option>'}</select>
-    <button class="btn line sm no-print" id="printBtn">${svg('print','sm')}인쇄/PDF</button></div>`;
+  const wp=b.weeklyPercents;
+  const printBar=`<div class="selectbar"><button class="btn line sm no-print" id="printBtn">${svg('print','sm')}인쇄/PDF</button></div>`;
 
-  // KPI
-  const wp=b.weeklyPercents;const idx=weeks.indexOf(selWeek);
-  const curPct=idx>=0?wp[idx]:null;const prevPct=idx>0?wp[idx-1]:null;const delta=(curPct!=null&&prevPct!=null)?curPct-prevPct:null;
-  const hw=b.homeworks;
-  const selDate=(b.perSession.find(s=>s.week===selWeek)||{}).date;
-  let hwScoped=hw;
-  if(selDate){const t0=new Date(selDate+'T00:00:00').getTime();const near=hw.filter(h=>h.week_date&&Math.abs(new Date(h.week_date+'T00:00:00').getTime()-t0)<=3*86400000);if(near.length)hwScoped=near;}
-  const hwAcc=hwAccuracyAvg(hwScoped);const hwTime=hwTimeAvg(hw);
+  // KPI (전체 누적)
+  const {readiness}=computeReadiness({weeklyPercents:b.weeklyPercents,questionRecords:b.questionRecords,essays:b.essayInputs,homeworks:b.homeworks});
+  const curPct=wp.length?wp[wp.length-1]:null;const prevPct=wp.length>1?wp[wp.length-2]:null;const delta=(curPct!=null&&prevPct!=null)?curPct-prevPct:null;
+  const hw=b.homeworks;const hwAcc=hwAccuracyAvg(hw);const hwTime=hwTimeAvg(hw);
   const heat=heatFromRecords(b.questionRecords);let weakCells=0;UNITS.forEach(u=>COGNITIONS.forEach(cg=>{if(heat[u][cg].rate!=null&&heat[u][cg].rate<40)weakCells++;}));
   // 단원별 정답률
   const unitAgg={};UNITS.forEach(u=>unitAgg[u]={e:0,p:0});b.questionRecords.forEach(r=>{unitAgg[r.unit].e+=r.earned;unitAgg[r.unit].p+=r.points;});
-  const comment=await db.getTeacherComment(sid,selWeek);
+  // 강사 코멘트(전체)
+  const comments=await db.listTeacherComments(sid);
+  const curComment=comments.find(t=>t.week_no===0);
+  const wkLabel=w=>w===0?'종합':w+'주차';
+  const pastList=comments.length?comments.map(t=>`<div class="timeline-item" style="padding:10px;margin-bottom:8px"><div class="th" style="margin-bottom:4px"><div><span class="chip ${t.week_no===0?'purple':'gray'}">${esc(wkLabel(t.week_no))}</span></div></div>
+      <div style="font-size:13px;white-space:pre-wrap;line-height:1.6">${esc(t.comment)}</div></div>`).join(''):'<p class="muted">등록된 코멘트가 없습니다.</p>';
 
-  c.innerHTML=(readonly?'':await studentSelector())+weekSel+`
+  c.innerHTML=(readonly?'':await studentSelector())+printBar+`
     <div class="card" id="reportSheet">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid var(--ink);padding-bottom:12px;margin-bottom:14px">
-        <div><div style="font-size:12px;color:var(--muted)">NK 약술논술 AI 케어 · 주간 리포트</div>
-          <h2 style="margin:4px 0 0">${esc(st?.name||'')} <span class="muted" style="font-size:14px">${esc(st?.grade_type||'')} · ${selWeek?selWeek+'주차':'-'}</span></h2></div>
+        <div><div style="font-size:12px;color:var(--muted)">NK 약술논술 AI 케어 · 진행 현황 리포트</div>
+          <h2 style="margin:4px 0 0">${esc(st?.name||'')} <span class="muted" style="font-size:14px">${esc(st?.grade_type||'')}</span></h2></div>
         <div class="chip ${st?.status==='퇴원'?'red':'green'}">${esc(st?.status||'재원')}</div>
       </div>
       <div class="kpi-grid" style="margin-bottom:16px">
-        <div class="kpi"><div class="lbl">회차 점수</div><div class="val">${curPct==null?'-':r1(curPct)+'<small>%</small>'}</div></div>
-        <div class="kpi"><div class="lbl">직전 대비</div><div class="val">${delta==null?'-':(delta>=0?'+':'')+r1(delta)+'<small>%p</small>'}</div></div>
-        <div class="kpi"><div class="lbl">과제 정답률</div><div class="val">${hwAcc==null?'-':r1(hwAcc)+'<small>%</small>'}</div></div>
+        <div class="kpi"><div class="lbl">준비도</div><div class="val">${readiness==null?'-':r1(readiness)+'<small>%</small>'}</div></div>
+        <div class="kpi"><div class="lbl">최근 회차 점수</div><div class="val">${curPct==null?'-':r1(curPct)+'<small>%</small>'} ${delta==null?'':(delta>=0?'<span class="delta up" style="font-size:13px">'+svg('arrowUp','xs')+r1(Math.abs(delta))+'%p</span>':'<span class="delta down" style="font-size:13px">'+svg('arrowDown','xs')+r1(Math.abs(delta))+'%p</span>')}</div></div>
+        <div class="kpi"><div class="lbl">과제 누적 정답률</div><div class="val">${hwAcc==null?'-':r1(hwAcc)+'<small>%</small>'}</div></div>
         <div class="kpi"><div class="lbl">취약 셀 수</div><div class="val">${weakCells}<small> 개</small></div></div>
       </div>
       <div class="muted" style="font-size:12px;margin:-8px 0 14px">과제 평균 풀이 시간: <b>${hwTime==null?'-':r1(hwTime)+'분/회'}</b></div>
@@ -1484,19 +1546,18 @@ async function renderReport(c){
           return `<div class="hbar-row"><span>${esc(u)}</span><div class="bar-track"><div class="bar-fill" style="width:${p||0}%;background:${p==null?'#ccc':(p<40?'var(--red)':p<70?'var(--amber)':'var(--green)')}"></div></div><span class="num">${p==null?'-':p+'%'}</span></div>`;}).join('')}</div>
       </div>
       <div style="margin-top:14px"><h3 style="font-size:13px">강사 코멘트</h3>
-        ${readonly?`<div class="muted" style="padding:10px;background:var(--bg);border-radius:9px;min-height:40px">${comment?esc(comment.comment):'등록된 코멘트가 없습니다.'}</div>`
-          :`<textarea id="rep_comment" rows="3" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:9px">${comment?esc(comment.comment):''}</textarea>
+        ${readonly?'':`<textarea id="rep_comment" rows="3" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:9px" placeholder="진행 현황 종합 코멘트">${curComment?esc(curComment.comment):''}</textarea>
             <button class="btn sm no-print" id="rep_save" style="margin-top:6px">${svg('check','xs')}코멘트 저장</button><span id="rep_msg" class="msg" style="margin-left:8px"></span>`}
+        <div style="margin-top:10px">${pastList}</div>
       </div>
-      <div style="margin-top:14px"><h3 style="font-size:13px">다음 주 안내</h3>
+      <div style="margin-top:14px"><h3 style="font-size:13px">다음 단계 안내</h3>
         <div class="note-blue">취약 단원 집중 보완과 첨삭 서술 근거 정교화를 진행합니다. 자세한 사항은 담당 강사 코멘트를 참고하세요.</div></div>
       <div class="divider"></div>
       <p class="muted" style="font-size:11px">본 리포트는 학습 관리용 참고 자료이며 합격을 보장하지 않습니다. · 생성일 ${todayStr()}</p>
     </div>`;
   bindStudentSelector(()=>renderReport(c));
-  const wk=$('wkSel');if(wk)wk.addEventListener('change',()=>{state.reportWeek=Number(wk.value);renderReport(c);});
   $('printBtn')?.addEventListener('click',()=>window.print());
-  $('rep_save')?.addEventListener('click',async()=>{const m=$('rep_msg');m.className='msg';try{await db.saveTeacherComment(sid,selWeek,$('rep_comment').value.trim());m.className='msg ok';m.textContent='저장됨';}catch(e){m.className='msg err';m.textContent='실패';}});
+  $('rep_save')?.addEventListener('click',async()=>{const m=$('rep_msg');m.className='msg';try{await db.saveTeacherComment(sid,0,$('rep_comment').value.trim());m.className='msg ok';m.textContent='저장됨';renderReport(c);}catch(e){m.className='msg err';m.textContent='실패';}});
   // 라인차트
   if(typeof Chart!=='undefined'&&wp.length){
     state.charts.push(new Chart($('repLine').getContext('2d'),{type:'line',
