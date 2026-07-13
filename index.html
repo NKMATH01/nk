@@ -130,6 +130,12 @@
   .chip.purple{background:#EFEAFE;color:var(--purple)}
   .delta{display:inline-flex;align-items:center;gap:2px;font-weight:700;font-variant-numeric:tabular-nums}
   .delta.up{color:var(--green)} .delta.down{color:var(--red)} .delta.flat{color:var(--muted)}
+  .wk-note{border:1px solid var(--line);border-radius:11px;padding:10px 12px;margin-bottom:8px}
+  .wk-note>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-weight:700;font-size:13px}
+  .wk-note>summary::-webkit-details-marker{display:none}
+  .wk-note>summary::before{content:'▸';color:var(--muted);font-size:11px;margin-right:2px}
+  .wk-note[open]>summary::before{content:'▾'}
+  .wk-note[open]>summary{margin-bottom:8px;border-bottom:1px solid var(--line-2);padding-bottom:8px}
 
   .pill{display:inline-flex;align-items:center;gap:6px;background:#F1F2F6;color:var(--ink);padding:6px 12px;border-radius:22px;font-size:12.5px;font-weight:600}
   .pill .dday{background:var(--ink);color:#fff;border-radius:16px;padding:1px 8px;font-size:11px}
@@ -450,7 +456,8 @@ function buildDemoStore(){
   ];
   const U=(name,campus,region,eo,er,nr,mg,qmix,date,quota,notes)=>({
     id:uuid(),name,campus:campus||null,region,essay_only:eo,essay_ratio:er,naesin_ratio:nr,min_grade_rule:mg,
-    math_scope:'수Ⅰ·수Ⅱ',question_mix:qmix,exam_date:date,quota:quota,confirmed:false,notes:notes||null});
+    math_scope:'수Ⅰ·수Ⅱ',question_mix:qmix,exam_date:date,quota:quota,confirmed:false,notes:notes||null,
+    last_competition:null,last_cut_pct:null,last_result_note:null});
   const universities=[
     U('국민대',null,'서울',true,'논술 100%','미반영','요강 확인 필요','국어 단답+수학 서술 12문항','2026-11-22',210,'EBS 수특·수완 기반'),
     U('상명대',null,'서울',false,'논술 70%+내신 30%','30%','요강 확인 필요','국어+수학 10문항','2026-11-29',160,null),
@@ -470,6 +477,9 @@ function buildDemoStore(){
     U('한국기술교육대',null,'충청',true,'논술 100%','미반영','요강 확인 필요','수학 서술 12문항','2026-11-21',85,null),
   ];
   const uByName=n=>universities.find(u=>u.name===n);
+  // 작년 입시결과 데모 시드(경쟁률·합격선%)
+  [['가천대',40,68,'2025 자연 기준(데모)'],['서경대',25,74,'2025 논술 100% 기준(데모)'],['국민대',30,71,'2025 기준(데모)']]
+    .forEach(([n,comp,cut,note])=>{const u=uByName(n);if(u){u.last_competition=comp;u.last_cut_pct=cut;u.last_result_note=note;}});
   const student_targets=[];
   const addT=(si,names)=>names.forEach((n,i)=>student_targets.push({id:uuid(),student_id:students[si].id,university_id:uByName(n).id,priority:i+1}));
   addT(0,['국민대','가천대','서경대']);
@@ -870,7 +880,14 @@ async function renderDashboard(c){
   c.querySelectorAll('tr[data-sid]').forEach(tr=>tr.addEventListener('click',()=>{cur.studentId=tr.dataset.sid;navigate('diagnosis');}));
 }
 function band(rd){if(rd==null)return {label:'N/A',cls:'gray'};if(rd>=80)return {label:'상',cls:'green'};if(rd>=65)return {label:'중상',cls:'blue'};if(rd>=50)return {label:'중',cls:'amber'};return {label:'중하',cls:'red'};}
-function admitBand(rd){if(rd==null)return {label:'-',cls:'gray'};if(rd>75)return {label:'안정',cls:'green'};if(rd>=55)return {label:'적정',cls:'blue'};return {label:'도전',cls:'amber'};}
+function admitBand(rd,u){if(rd==null)return {label:'-',cls:'gray',delta:0};
+  const cl=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+  const compAdj=u&&u.last_competition!=null?cl((u.last_competition-15)*0.25,-5,5):0;
+  const cutAdj=u&&u.last_cut_pct!=null?cl((u.last_cut_pct-65)*0.4,-8,8):0;
+  const delta=cl(compAdj+cutAdj,-10,10);
+  if(rd>75+delta)return {label:'안정',cls:'green',delta};
+  if(rd>=55+delta)return {label:'적정',cls:'blue',delta};
+  return {label:'도전',cls:'amber',delta};}
 
 /* ═══════════════════════════════════════════════════════════════════
    2) 학생 관리
@@ -1385,14 +1402,14 @@ async function renderDiagnosis(c){
     </div>`;}).join(''):'<p class="muted">진단할 채점 데이터가 없습니다.</p>';
 
   const reasonBars=reasonTotal?WRONG_REASONS.map(r=>{const pct=Math.round(reasonCount[r]/reasonTotal*100);
-    return `<div class="hbar-row"><span>${esc(r)}</span><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:var(--red)"></div></div><span class="num">${pct}%</span></div>`;}).join(''):'<p class="muted">기록된 오답원인이 없습니다.</p>';
+    return `<div class="hbar-row"><span>${esc(r)}</span><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:var(--red)"></div></div><span class="num">${pct}%</span></div>`;}).join(''):'<p class="muted">기록된 오답원인이 없습니다. [주간테스트] 채점 그리드에서 문항별 태그 버튼(🏷)으로 입력하면 자동 집계됩니다.</p>';
 
   c.innerHTML=await studentSelector()+`
     <div class="card"><h3>${svg('activity')}단원 × 사고과정 히트맵 <span class="sub">최근 3회 가중(50/30/20%) · 득점/배점 기반</span></h3>${heatTable}
       <p class="muted" style="font-size:11.5px;margin-top:10px">색상: <span class="chip red">빨강 &lt;40</span> <span class="chip amber">주황 40~70</span> <span class="chip green">초록 ≥70</span> · 셀에 마우스를 올리면 상세가 표시됩니다.</p></div>
     <div class="grid2">
       <div class="card"><h3>${svg('target')}우선 보완 순위</h3>${rankCards}</div>
-      <div class="card"><h3>${svg('activity')}오답 원인 패턴</h3>${reasonBars}</div>
+      <div class="card"><h3>${svg('activity')}오답 원인 패턴 <span class="sub">주간테스트 채점의 오답원인 태그 자동 집계</span></h3>${reasonBars}</div>
     </div>`;
   bindStudentSelector(()=>renderDiagnosis(c));
 }
@@ -1429,14 +1446,22 @@ async function renderEssays(c){
   let wrongCard='';
   if(readonly){
     const ctx=await loadContext();const b=await studentBundle(sid,ctx);
-    const byWeek={};b.questionRecords.filter(r=>r.earned<r.points).forEach(r=>{const w=r.week||0;(byWeek[w]=byWeek[w]||[]).push(r);});
+    const maxByWeek={};b.perSession.forEach(s=>{maxByWeek[s.week||0]=(s.total||s.pts||0);});
+    const byWeek={};b.questionRecords.forEach(r=>{const w=r.week||0;(byWeek[w]=byWeek[w]||[]).push(r);});
     const wks=Object.keys(byWeek).map(Number).sort((a,b)=>b-a);
-    const inner=wks.length?wks.map(w=>`<div style="margin-bottom:10px"><div class="muted" style="font-size:12px;font-weight:700;margin-bottom:4px">${w}주차</div>
-      ${byWeek[w].sort((a,b)=>(a.no||0)-(b.no||0)).map(r=>`<div class="timeline-item" style="padding:10px;margin-bottom:8px">
-        <div style="font-size:13px"><b>${esc(String(r.no||'-'))}번</b> · ${esc(r.unit)}·${esc(r.cognition)} <span class="muted">(${r.earned}/${r.points}점)</span> ${r.wrong_reason?`<span class="chip amber">${esc(r.wrong_reason)}</span>`:''}</div>
-        ${r.reason_note?`<div class="muted" style="font-size:12.5px;margin-top:6px;padding:8px;background:var(--bg);border-radius:8px">${esc(r.reason_note)}</div>`:''}
-        ${r.photo_url?`<div style="margin-top:6px"><a href="${esc(r.photo_url)}" target="_blank"><img src="${esc(r.photo_url)}" style="max-height:100px;border-radius:6px"></a></div>`:''}
-      </div>`).join('')}</div>`).join(''):'<p class="muted">감점된 문항이 없습니다.</p>';
+    const inner=wks.length?wks.map((w,wi)=>{
+      const rows=byWeek[w].slice().sort((a,b)=>(a.no||0)-(b.no||0));
+      const earnedSum=rows.reduce((s,r)=>s+(r.earned||0),0);
+      const ptsSum=rows.reduce((s,r)=>s+(r.points||0),0);
+      const maxSum=maxByWeek[w]||ptsSum;
+      const wrongN=rows.filter(r=>r.earned<r.points).length;
+      return `<details class="wk-note"${wi===0?' open':''}><summary><span class="wk-title">${w}주차</span>
+        <span class="chip blue">${earnedSum}/${maxSum}</span>${wrongN?`<span class="chip amber">감점 ${wrongN}문항</span>`:'<span class="chip green">전항 만점</span>'}</summary>
+        ${rows.map(r=>{const ok=r.earned>=r.points;return `<div class="timeline-item" style="padding:10px;margin-bottom:8px">
+          <div style="font-size:13px"><b>${esc(String(r.no||'-'))}번</b> · ${esc(r.unit)}·${esc(r.cognition)} ${ok?`<span class="chip green">${r.earned}/${r.points}점</span>`:`<span class="muted">(${r.earned}/${r.points}점)</span> ${r.wrong_reason?`<span class="chip amber">${esc(r.wrong_reason)}</span>`:''}`}</div>
+          ${r.reason_note?`<div class="muted" style="font-size:12.5px;margin-top:6px;padding:8px;background:var(--bg);border-radius:8px">${esc(r.reason_note)}</div>`:''}
+          ${r.photo_url?`<div style="margin-top:6px"><a href="${esc(r.photo_url)}" target="_blank"><img src="${esc(r.photo_url)}" style="max-height:100px;border-radius:6px"></a></div>`:''}
+        </div>`;}).join('')}</details>`;}).join(''):'<p class="muted">채점된 주간테스트가 없습니다.</p>';
     wrongCard=`<div class="card"><h3>${svg('activity')}주간테스트 오답 노트</h3>${inner}</div>`;
   }
 
@@ -1474,7 +1499,7 @@ async function renderAdmission(c){
   const evidence=['weekly','coverage','mastery','essay','homework'].map(k=>`<div class="kv"><span>${esc(labels[k])}</span><b>${partMap[k]==null?'N/A':r1(partMap[k])+'%'}</b></div>`).join('');
 
   const cards=targets.length?targets.map(t=>{const u=ctx.universities.find(x=>x.id===t.university_id);if(!u)return '';
-    const ab=admitBand(readiness);
+    const ab=admitBand(readiness,u);
     return `<div class="uni-card"><div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div><h4>${t.priority}지망 · ${esc(u.name)}${u.campus?`<span class="muted"> (${esc(u.campus)})</span>`:''}</h4>
           <div class="region">${esc(u.region)} · ${u.essay_only?'논술 100%':esc(u.essay_ratio||'논술+내신')}</div></div>
@@ -1482,6 +1507,8 @@ async function renderAdmission(c){
       <div style="display:flex;align-items:center;gap:10px;margin:12px 0"><span class="chip ${ab.cls}">${ab.label}</span><b style="font-size:22px">${readiness==null?'N/A':r1(readiness)+'%'}</b>
         <canvas class="spark" data-spark></canvas></div>
       <div class="kv"><span>논술고사일</span><b>${u.exam_date?esc(fmtDate(u.exam_date))+' ('+ddayLabel(u.exam_date)+')':'미정'}</b></div>
+      ${(u.last_competition!=null||u.last_cut_pct!=null)?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${u.last_competition!=null?`<span class="chip gray">작년 경쟁률 ${esc(u.last_competition)}:1</span>`:''}${u.last_cut_pct!=null?`<span class="chip gray">작년 합격선 ${esc(u.last_cut_pct)}%</span>`:''}</div>`:''}
+      ${ab.delta?`<div class="muted" style="font-size:11px;margin-top:4px">기준 보정 ${ab.delta>0?'+':''}${ab.delta.toFixed(1)}</div>`:''}
     </div>`;}).join(''):'<p class="muted">목표 대학이 없습니다. [학생 관리]에서 설정하세요.</p>';
 
   c.innerHTML=await studentSelector()+`
@@ -1491,7 +1518,7 @@ async function renderAdmission(c){
       <div class="card"><h3>${svg('activity')}준비도 근거</h3>
         <div style="font-size:32px;font-weight:800;margin-bottom:10px">${readiness==null?'N/A':r1(readiness)+'%'}</div>${evidence}</div>
     </div>
-    <div class="card note-blue">본 지표는 학습 관리를 위한 참고 자료이며 합격을 보장하지 않습니다. 대학별 실제 컷·경쟁률 벤치마크가 확보되기 전까지 모든 목표 대학에 동일한 준비도 수치가 적용됩니다. 반영 비율·수능최저 등은 각 대학 모집요강을 확인하세요.</div>`;
+    <div class="card note-blue">본 지표는 학습 관리를 위한 참고 자료이며 합격을 보장하지 않습니다. 작년 경쟁률·합격선이 입력된 대학은 밴드 기준(도전/적정/안정 경계)이 대학별로 보정됩니다. 반영 비율·수능최저 등은 각 대학 모집요강을 확인하세요.</div>`;
   bindStudentSelector(()=>renderAdmission(c));
   // 스파크라인
   c.querySelectorAll('[data-spark]').forEach(cv=>{if(typeof Chart==='undefined')return;
@@ -1571,7 +1598,7 @@ async function renderReport(c){
 async function renderUniversities(c){
   const us=await db.listUniversities();
   c.innerHTML=`<div class="card"><h3>${svg('building')}약술형 논술 실시 대학 <span class="sub">${us.length}개 · 시행계획 기준(요강 확인 필요)</span></h3>
-    <div style="overflow-x:auto"><table><thead><tr><th>대학</th><th>지역</th><th>논술100%</th><th>반영비율</th><th>수능최저</th><th>출제범위</th><th>문항구성</th><th>고사일</th><th class="num">모집</th><th></th></tr></thead><tbody>
+    <div style="overflow-x:auto"><table><thead><tr><th>대학</th><th>지역</th><th>논술100%</th><th>반영비율</th><th>수능최저</th><th>출제범위</th><th>문항구성</th><th>고사일</th><th class="num">모집</th><th>작년 결과</th><th></th></tr></thead><tbody>
     ${us.map(u=>`<tr data-uid="${esc(u.id)}">
       <td><b>${esc(u.name)}</b>${u.campus?` <span class="muted">(${esc(u.campus)})</span>`:''} ${!u.confirmed?'<span class="chip gray">시행계획</span>':'<span class="chip green">확정</span>'}</td>
       <td>${esc(u.region)}</td><td>${u.essay_only?'<span class="chip green">100%</span>':'<span class="chip gray">병행</span>'}</td>
@@ -1580,6 +1607,7 @@ async function renderUniversities(c){
       <td class="muted">${esc(u.question_mix||'-')}</td>
       <td>${u.exam_date?esc(fmtDate(u.exam_date))+' <span class="chip gray">'+ddayLabel(u.exam_date)+'</span>':'<span class="muted">미정</span>'}</td>
       <td class="num">${u.quota!=null?esc(u.quota):'-'}</td>
+      <td class="muted"${u.last_result_note?` title="${esc(u.last_result_note)}"`:''}>${(u.last_competition!=null||u.last_cut_pct!=null)?`${u.last_competition!=null?'경쟁률 '+esc(u.last_competition)+':1':''}${u.last_competition!=null&&u.last_cut_pct!=null?' · ':''}${u.last_cut_pct!=null?'합격선 '+esc(u.last_cut_pct)+'%':''}`:'-'}</td>
       <td><button class="btn line sm uedit" data-uid="${esc(u.id)}">수정</button></td></tr>`).join('')}
     </tbody></table></div></div><div id="uEdit"></div>`;
   c.querySelectorAll('.uedit').forEach(b=>b.addEventListener('click',()=>editUniversity(b.dataset.uid,us,c)));
@@ -1593,12 +1621,16 @@ function editUniversity(uid,us,c){
       <div class="field"><label>확정 여부</label><select id="ue_conf"><option value="false" ${!u.confirmed?'selected':''}>시행계획 기준</option><option value="true" ${u.confirmed?'selected':''}>확정</option></select></div></div>
     <div class="row" style="margin-top:8px"><div class="field" style="flex:2"><label>문항구성</label><input id="ue_mix" value="${esc(u.question_mix||'')}"></div>
       <div class="field" style="flex:2"><label>반영비율</label><input id="ue_ratio" value="${esc(u.essay_ratio||'')}"></div></div>
+    <div class="row" style="margin-top:8px"><div class="field"><label>작년 경쟁률</label><input id="ue_comp" type="number" step="0.1" min="0" value="${u.last_competition!=null?esc(u.last_competition):''}" placeholder="예: 21.5"></div>
+      <div class="field"><label>작년 합격선(%)</label><input id="ue_cut" type="number" step="0.1" min="0" max="100" value="${u.last_cut_pct!=null?esc(u.last_cut_pct):''}" placeholder="예: 72"></div>
+      <div class="field" style="flex:2"><label>작년 결과 비고/출처</label><input id="ue_note" value="${esc(u.last_result_note||'')}" placeholder="출처·비고"></div></div>
     <button class="btn" id="ue_save">${svg('check','sm')}저장</button> <button class="btn line" id="ue_cancel">닫기</button><div id="ue_msg" class="msg"></div></div>`;
   wrap.scrollIntoView({behavior:'smooth',block:'nearest'});
   $('ue_cancel').addEventListener('click',()=>wrap.innerHTML='');
   $('ue_save').addEventListener('click',async()=>{const m=$('ue_msg');m.className='msg';
     try{await db.updateUniversity(uid,{exam_date:$('ue_date').value||null,quota:$('ue_quota').value?Number($('ue_quota').value):null,
-      min_grade_rule:$('ue_mg').value.trim()||null,confirmed:$('ue_conf').value==='true',question_mix:$('ue_mix').value.trim()||null,essay_ratio:$('ue_ratio').value.trim()||null});
+      min_grade_rule:$('ue_mg').value.trim()||null,confirmed:$('ue_conf').value==='true',question_mix:$('ue_mix').value.trim()||null,essay_ratio:$('ue_ratio').value.trim()||null,
+      last_competition:$('ue_comp').value?Number($('ue_comp').value):null,last_cut_pct:$('ue_cut').value?Number($('ue_cut').value):null,last_result_note:$('ue_note').value.trim()||null});
       m.className='msg ok';m.textContent='저장됨';renderUniversities(c);}
     catch(e){m.className='msg err';m.textContent='실패: '+(e?.message||'오류');}});
 }
@@ -1633,10 +1665,11 @@ async function renderStudentTargets(c){
   const sid=cur.studentId;const ctx=await loadContext();const b=await studentBundle(sid,ctx);
   const {readiness}=computeReadiness({weeklyPercents:b.weeklyPercents,questionRecords:b.questionRecords,essays:b.essayInputs,homeworks:b.homeworks});
   const targets=ctx.targets.filter(t=>t.student_id===sid).sort((a,b)=>a.priority-b.priority);
-  const cards=targets.length?targets.map(t=>{const u=ctx.universities.find(x=>x.id===t.university_id);if(!u)return '';const ab=admitBand(readiness);
+  const cards=targets.length?targets.map(t=>{const u=ctx.universities.find(x=>x.id===t.university_id);if(!u)return '';const ab=admitBand(readiness,u);
     return `<div class="uni-card"><h4>${t.priority}지망 · ${esc(u.name)}${u.campus?' ('+esc(u.campus)+')':''}</h4><div class="region">${esc(u.region)} · ${u.essay_only?'논술 100%':esc(u.essay_ratio||'')}</div>
       <div style="display:flex;align-items:center;gap:10px;margin-top:10px"><span class="chip ${ab.cls}">${ab.label}</span><b>${readiness==null?'N/A':r1(readiness)+'%'}</b></div>
-      <div class="kv" style="margin-top:8px"><span>논술고사일</span><b>${u.exam_date?esc(fmtDate(u.exam_date))+' ('+ddayLabel(u.exam_date)+')':'미정'}</b></div></div>`;}).join(''):'<p class="muted">등록된 목표 대학이 없습니다.</p>';
+      <div class="kv" style="margin-top:8px"><span>논술고사일</span><b>${u.exam_date?esc(fmtDate(u.exam_date))+' ('+ddayLabel(u.exam_date)+')':'미정'}</b></div>
+      ${(u.last_competition!=null||u.last_cut_pct!=null)?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${u.last_competition!=null?`<span class="chip gray">작년 경쟁률 ${esc(u.last_competition)}:1</span>`:''}${u.last_cut_pct!=null?`<span class="chip gray">작년 합격선 ${esc(u.last_cut_pct)}%</span>`:''}</div>`:''}${ab.delta?`<div class="muted" style="font-size:11px;margin-top:4px">기준 보정 ${ab.delta>0?'+':''}${ab.delta.toFixed(1)}</div>`:''}</div>`;}).join(''):'<p class="muted">등록된 목표 대학이 없습니다.</p>';
   c.innerHTML=`<div class="card"><h3>${svg('target')}내 목표 대학</h3><div class="grid2">${cards}</div>
     <div class="note-blue" style="margin-top:12px">본 지표는 참고 자료이며 합격을 보장하지 않습니다.</div></div>`;
 }
