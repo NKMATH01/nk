@@ -79,6 +79,9 @@ async function renderStuCards(universities,savedSid){
           <div class="field" style="flex:1"><label>학부모 비밀번호</label><input class="acc_ppw" type="password" placeholder="4자 이상"></div>
           <button class="btn sm acc_parent">학부모계정</button></div>
         <div class="msg acc_msg"></div>
+        <div style="margin-top:8px"><button class="btn line sm plink">${svg('file','xs')}학부모 리포트 링크 발급</button>
+          <span class="muted" style="font-size:11.5px">비밀번호 없이 자녀 리포트만 볼 수 있는 링크입니다(기본 30일).</span>
+          <div class="plink_out" style="margin-top:6px"></div></div>
       </div>
     </div>`);
   }
@@ -105,6 +108,7 @@ async function renderStuCards(universities,savedSid){
     const accMsg=card.querySelector('.acc_msg');
     card.querySelector('.acc_student').addEventListener('click',()=>createAcct(card,sid,'student',accMsg));
     card.querySelector('.acc_parent').addEventListener('click',()=>createAcct(card,sid,'parent',accMsg));
+    card.querySelector('.plink').addEventListener('click',()=>issueParentLink(card,sid));
   });
 }
 async function createAcct(card,sid,role,m){
@@ -119,4 +123,35 @@ async function createAcct(card,sid,role,m){
   catch(e){m.className='msg err';m.textContent='실패: '+(e?.message||'오류');}
 }
 
-export { renderStudents, renderStuCards, createAcct };
+/* 학부모 리포트 링크 발급.
+   URL 에는 토큰만 담긴다(이름·연락처 등 개인정보 없음).
+   알림톡 자동 발송은 외부 계약이 필요해 v1 에서는 화면 표시 + 복사까지만 한다. */
+async function issueParentLink(card,sid){
+  const out=card.querySelector('.plink_out');
+  const btn=card.querySelector('.plink');
+  out.innerHTML='<span class="muted" style="font-size:12px">발급 중...</span>';
+  if(app.DEMO){out.innerHTML='<span class="chip gray">데모 모드 — 링크를 발급하지 않습니다</span>';return;}
+  btn.disabled=true;
+  try{
+    const r=await db.createParentLink(sid,30);
+    const until=r.expiresAt?String(r.expiresAt).slice(0,10):'';
+    out.innerHTML=`<div style="border:1px solid var(--line);border-radius:9px;padding:8px;background:var(--bg)">
+      <div class="muted" style="font-size:11.5px;margin-bottom:4px">${esc(r.phone||'')} 학부모용 · ${esc(until)}까지 유효</div>
+      <input class="plink_url" readonly value="${esc(r.url)}" style="width:100%;padding:6px 8px;border:1.5px solid var(--line);border-radius:7px;font-size:11.5px">
+      <div style="margin-top:6px"><button type="button" class="btn sm plink_copy">링크 복사</button>
+        <span class="muted" style="font-size:11.5px">카카오톡 등으로 전달하세요.</span></div>
+      <div class="plink_msg msg"></div></div>`;
+    out.querySelector('.plink_copy').addEventListener('click',async()=>{
+      const m=out.querySelector('.plink_msg');
+      try{await navigator.clipboard.writeText(r.url);m.className='msg ok';m.textContent='복사되었습니다.';}
+      catch(e){
+        // 클립보드 권한이 없을 수 있으니 선택 상태로 만들어 수동 복사를 돕는다.
+        const inp=out.querySelector('.plink_url');inp.focus();inp.select();
+        m.className='msg';m.textContent='자동 복사가 막혀 있습니다. 선택된 주소를 Ctrl+C 로 복사하세요.';
+      }
+    });
+  }catch(e){out.innerHTML='<div class="msg err">'+esc(e?.message||'오류')+'</div>';}
+  finally{btn.disabled=false;}
+}
+
+export { renderStudents, renderStuCards, createAcct, issueParentLink };

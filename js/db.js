@@ -186,6 +186,29 @@ const db={
   async updateProblem(id,patch){if(app.DEMO){const o=app.store.problems.find(x=>x.id===id);if(o)Object.assign(o,patch);return o;}
     const {error}=await app.sb.from('problems').update(Object.assign({updated_at:new Date().toISOString()},patch)).eq('id',id);if(error)throw error;},
 
+  /* ── 대학 연도별 실적 / 입시 결과 / 학부모 링크 / 리포트 초안 ── */
+  async listUnivStats(uid){if(app.DEMO)return (app.store.univ_admission_stats||[]).filter(s=>!uid||s.university_id===uid);
+    let q=app.sb.from('univ_admission_stats').select('*').order('year',{ascending:false});
+    if(uid)q=q.eq('university_id',uid);
+    return await sbq(q,'대학 실적 조회',[]);},
+  async upsertUnivStat(row){if(app.DEMO){const a=(app.store.univ_admission_stats=app.store.univ_admission_stats||[]);
+      const ex=a.find(x=>x.university_id===row.university_id&&x.year===row.year);
+      if(ex)Object.assign(ex,row);else a.push(Object.assign({id:uuid()},row));return;}
+    const {error}=await app.sb.from('univ_admission_stats').upsert(row,{onConflict:'university_id,year'});if(error)throw error;},
+  async deleteUnivStat(id){if(app.DEMO){app.store.univ_admission_stats=(app.store.univ_admission_stats||[]).filter(x=>x.id!==id);return;}
+    const {error}=await app.sb.from('univ_admission_stats').delete().eq('id',id);if(error)throw error;},
+  // 합격·불합격 기록은 관리자 전용(RLS). 학생·학부모 화면에서 호출하지 않는다.
+  async listOutcomes(){if(app.DEMO)return (app.store.admission_outcomes||[]).slice();
+    return await sbq(app.sb.from('admission_outcomes').select('*').order('year',{ascending:false}),'입시 결과 조회',[]);},
+  async upsertOutcome(row){if(app.DEMO){const a=(app.store.admission_outcomes=app.store.admission_outcomes||[]);
+      const ex=a.find(x=>x.student_id===row.student_id&&x.university_id===row.university_id&&x.year===row.year);
+      if(ex)Object.assign(ex,row);else a.push(Object.assign({id:uuid()},row));return;}
+    const {error}=await app.sb.from('admission_outcomes').upsert(row,{onConflict:'student_id,university_id,year'});if(error)throw error;},
+  async createParentLink(sid,days){if(app.DEMO)throw new Error('데모 모드에서는 링크를 발급하지 않습니다.');
+    return await apiFetch('/api/parent-link',{method:'POST',body:{student_id:sid,days}});},
+  async generateReportDraft(sid,weekNo){if(app.DEMO)throw new Error('데모 모드에서는 초안을 생성하지 않습니다.');
+    return await apiFetch('/api/report-draft',{method:'POST',body:{student_id:sid,week_no:weekNo}});},
+
   /* ── 변형 문제 (관리자 전용) ── */
   async listVariants(status){if(app.DEMO)return (app.store.problem_variants||[]).filter(v=>!status||v.review_status===status);
     let q=app.sb.from('problem_variants').select('*').order('created_at',{ascending:false});

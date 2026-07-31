@@ -65,7 +65,9 @@ async function renderReport(c){
       </div>
       <div style="margin-top:14px"><h3 style="font-size:13px">강사 코멘트</h3>
         ${readonly?'':`<textarea id="rep_comment" rows="3" style="width:100%;padding:10px;border:1.5px solid var(--line);border-radius:9px" placeholder="진행 현황 종합 코멘트">${curComment?esc(curComment.comment):''}</textarea>
-            <button class="btn sm no-print" id="rep_save" style="margin-top:6px">${svg('check','xs')}코멘트 저장</button><span id="rep_msg" class="msg" style="margin-left:8px"></span>`}
+            <button class="btn sm no-print" id="rep_save" style="margin-top:6px">${svg('check','xs')}코멘트 저장</button>
+            <button class="btn line sm no-print" id="rep_ai" style="margin-top:6px">${svg('spark','xs')}AI 초안</button><span id="rep_msg" class="msg" style="margin-left:8px"></span>
+            <div id="rep_draft" class="no-print"></div>`}
         <div style="margin-top:10px">${pastList}</div>
       </div>
       <div style="margin-top:14px"><h3 style="font-size:13px">다음 단계 안내</h3>
@@ -76,6 +78,7 @@ async function renderReport(c){
   bindStudentSelector(()=>renderReport(c));
   $('printBtn')?.addEventListener('click',()=>window.print());
   $('rep_save')?.addEventListener('click',async()=>{const m=$('rep_msg');m.className='msg';try{await db.saveTeacherComment(sid,0,$('rep_comment').value.trim());m.className='msg ok';m.textContent='저장됨';renderReport(c);}catch(e){m.className='msg err';m.textContent='실패';}});
+  bindAiDraft(sid,curComment);
   // 라인차트
   if(typeof Chart!=='undefined'&&wp.length){
     app.state.charts.push(new Chart($('repLine').getContext('2d'),{type:'line',
@@ -83,4 +86,55 @@ async function renderReport(c){
       options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,max:100}}}}));}
 }
 
-export { renderReport };
+/* AI 서술 초안.
+   초안은 회색 점선 상자에만 표시되고, [가져오기]를 눌러야 입력란으로 들어간다.
+   입력란에 들어간 뒤에도 강사가 [코멘트 저장]을 눌러야 리포트에 실린다(2단계). */
+async function bindAiDraft(sid,curComment){
+  const btn=$('rep_ai');
+  if(!btn)return;
+  const box=$('rep_draft');
+  const show=html=>{const b=$('rep_draft');if(b)b.innerHTML=html;};
+  const boxStyle='border:1.5px dashed var(--line);border-radius:9px;padding:10px;background:#FAFAFB;margin-top:8px';
+
+  // 이전에 만들어 둔 초안이 있으면 먼저 보여 준다.
+  if(curComment&&curComment.ai_draft){
+    show(`<div style="${boxStyle}"><div style="font-size:11px;font-weight:700;margin-bottom:4px">이전 AI 초안 (미확정)</div>
+      <div class="ai_draft_text" style="font-size:12.5px;white-space:pre-wrap">${esc(curComment.ai_draft)}</div>
+      <button type="button" class="btn sm ai_take" style="margin-top:6px">입력란으로 가져오기</button></div>`);
+    bindTake();
+  }
+
+  function bindTake(){
+    box?.querySelector?.('.ai_take')?.addEventListener('click',()=>{
+      const t=box.querySelector('.ai_draft_text');
+      const ta=$('rep_comment');
+      if(t&&ta){ta.value=t.textContent;ta.focus();}
+    });
+  }
+
+  btn.addEventListener('click',async()=>{
+    const m=$('rep_msg');m.className='msg';m.textContent='';
+    if(app.DEMO){show('<div style="'+boxStyle+'"><span class="chip gray">데모 모드 — 초안을 생성하지 않습니다</span></div>');return;}
+    const status=await db.getAiStatus();
+    if(!status||!status.configured){
+      show('<div style="'+boxStyle+'"><span class="chip amber">AI 미설정</span>'
+        +'<div class="muted" style="font-size:11.5px;margin-top:4px">GEMINI_API_KEY 가 등록되지 않았습니다. [설정] 화면을 참고하세요. 코멘트는 직접 작성하시면 됩니다.</div></div>');
+      return;
+    }
+    btn.disabled=true;
+    show('<div style="'+boxStyle+'"><span class="muted" style="font-size:12px">초안 생성 중...</span></div>');
+    try{
+      const r=await db.generateReportDraft(sid,0);
+      show(`<div style="${boxStyle}"><div style="font-size:11px;font-weight:700;margin-bottom:4px">AI 초안 (미확정 · 강사 확인 필요)</div>
+        <div class="ai_draft_text" style="font-size:12.5px;white-space:pre-wrap">${esc(r.draft||'')}</div>
+        <button type="button" class="btn sm ai_take" style="margin-top:6px">입력란으로 가져오기</button>
+        <span class="muted" style="font-size:11px;margin-left:6px">가져온 뒤 수정하고 [코멘트 저장]을 눌러야 리포트에 실립니다.</span></div>`);
+      bindTake();
+    }catch(e){
+      show('<div style="'+boxStyle+'"><div class="msg err">'+esc(e?.message||'오류')+'</div>'
+        +'<div class="muted" style="font-size:11px;margin-top:4px">검수 기준(확률·합격 단정 표현, 근거 없는 숫자)에 걸리면 초안을 내보내지 않습니다.</div></div>');
+    }finally{btn.disabled=false;}
+  });
+}
+
+export { renderReport, bindAiDraft };

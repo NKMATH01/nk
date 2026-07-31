@@ -207,7 +207,22 @@ function buildDemoStore(){
      review_status:'regenerate',review_note:'정답 2회 계산 불일치로 자동 폐기',reviewed_at:null,created_at:'2026-07-28'},
   ];
 
-  return {students,universities,student_targets,test_sessions,questions,scores,homework_records,essay_gradings,teacher_comments,counseling_notes,prescriptions,problems,problem_variants,accounts:[]};
+
+  // 연도별 대학 실적 + 입시 결과 샘플(캘리브레이션 화면용)
+  const univ_admission_stats=[];
+  [['가천대',[[2025,40,68,'150점 만점 환산 70%컷(데모)'],[2024,36,66,'150점 만점 환산 70%컷(데모)']]],
+   ['국민대',[[2025,30,71,null]]]].forEach(([n,rows])=>{
+    const u=uByName(n);if(!u)return;
+    rows.forEach(([y,comp,cut,basis])=>univ_admission_stats.push({id:uuid(),university_id:u.id,year:y,competition:comp,cut_pct:cut,cut_basis:basis,note:null,created_at:'2026-01-10'}));
+  });
+  const admission_outcomes=[];
+  [[0,'가천대',2025,'합격','적정',68],[1,'국민대',2025,'합격','안정',82],[2,'가천대',2025,'불합격','도전',49],
+   [3,'국민대',2025,'추가합격','적정',63],[4,'고려대',2025,'불합격','도전',52]].forEach(([si,un,y,res,bandLabel,rd])=>{
+    const u=uByName(un);if(!u||!students[si])return;
+    admission_outcomes.push({id:uuid(),student_id:students[si].id,university_id:u.id,year:y,result:res,readiness_at:rd,band_at:bandLabel,note:null,created_at:'2026-02-01'});
+  });
+
+  return {students,universities,student_targets,test_sessions,questions,scores,homework_records,essay_gradings,teacher_comments,counseling_notes,prescriptions,problems,problem_variants,univ_admission_stats,admission_outcomes,accounts:[]};
 }
 
 export { buildDemoStore };

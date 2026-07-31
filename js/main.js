@@ -1,5 +1,5 @@
 /* 진입점 — 메뉴 정의, enterApp, navigate 라우터, 부트스트랩 */
-import { doLogin, doLogout, loadSession, maybeRefreshSession } from './auth.js';
+import { doLogin, doLogout, loadSession, maybeRefreshSession, saveSession } from './auth.js';
 import { cdnLoaded, isConfigured } from './config.js';
 import { applySession, db } from './db.js';
 import { buildDemoStore } from './demo.js';
@@ -89,6 +89,23 @@ function navigate(tab){
   (R[tab]||(x=>x.innerHTML='<p class="muted">준비 중</p>'))(c);
 }
 
+/* 학부모 링크 토큰을 정식 세션으로 승격한다.
+   /api/refresh 가 서명·만료·token_version 을 한 번에 검증해 주고,
+   유효하면 student_id 까지 담긴 새 토큰을 돌려주므로 그대로 세션에 넣는다. */
+async function adoptParentToken(){
+  try{
+    const res=await fetch('/api/refresh',{method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+app.session.token}});
+    if(!res.ok)return false;
+    const d=await res.json();
+    if(!d||!d.token)return false;
+    app.session={token:d.token,role:d.role,student_id:d.student_id||null,phone:d.phone,exp:d.exp,tv:d.tv};
+    saveSession(app.session);
+    applySession();
+    return true;
+  }catch(e){console.warn('학부모 링크 검증 실패',e&&e.message);return false;}
+}
+
 /* 하위 모듈이 순환 import 없이 라우터를 호출할 수 있도록 후크를 주입한다.
    아래 부트스트랩이 실행되기 전에 채워져 있어야 한다. */
 app.enterApp = enterApp;
@@ -114,6 +131,22 @@ $('sideBackdrop').addEventListener('click',()=>setSide(false));
   if(params.get('demo')==='1'){app.DEMO=true;app.store=buildDemoStore();await enterApp('admin',null);return;}
   $('loginView').style.display='flex';
   if(!isConfigured()){$('cfgBanner').style.display='block';$('loginBtn').disabled=true;return;}
+  // 학부모 링크(?ptoken=)로 들어온 경우. 토큰 유효성은 서버가 판단한다
+  // (클라이언트는 서명을 검증할 수 없으므로 /api/refresh 로 한 번 확인한다).
+  const ptoken=params.get('ptoken');
+  if(ptoken){
+    app.session={token:ptoken,role:'parent',student_id:null,exp:Math.floor(Date.now()/1000)+60};
+    applySession();
+    const ok=await adoptParentToken();
+    // 주소창에서 토큰을 지운다(뒤로가기·공유로 새어 나가지 않게).
+    try{history.replaceState(null,'',location.pathname);}catch(e){}
+    if(ok){await enterApp(app.session.role,app.session.student_id);return;}
+    app.session=null;applySession();
+    $('loginView').style.display='flex';
+    $('loginErr').textContent='링크가 만료되었거나 올바르지 않습니다. 전화번호로 로그인해 주세요.';
+    return;
+  }
+
   const s=loadSession();
   app.session=s;
   // 세션 토큰을 실은 클라이언트를 만든다. 토큰 클레임으로 RLS 가 판별되므로

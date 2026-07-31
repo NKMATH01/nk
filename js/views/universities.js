@@ -38,9 +38,34 @@ function editUniversity(uid,us,c){
     <div class="row" style="margin-top:8px"><div class="field" style="flex:1"><label>합격선 산출 기준</label>
       <input id="ue_basis" value="${esc(u.last_cut_basis||'')}" placeholder="예: 150점 만점 70%컷 환산">
       <div class="muted" style="font-size:11.5px;margin-top:4px">이 값을 입력해야 [합격 가능성] 화면에서 첨삭 점수와 합격선 격차를 비교합니다. 비워 두면 비교를 생략합니다(기준이 다른 값끼리 비교해 오판하는 것을 막기 위함).</div></div></div>
-    <button class="btn" id="ue_save">${svg('check','sm')}저장</button> <button class="btn line" id="ue_cancel">닫기</button><div id="ue_msg" class="msg"></div></div>`;
+    <button class="btn" id="ue_save">${svg('check','sm')}저장</button> <button class="btn line" id="ue_cancel">닫기</button><div id="ue_msg" class="msg"></div>
+    <div class="divider"></div>
+    <div style="font-size:12px;font-weight:700;margin-bottom:4px">연도별 실적 <span class="muted" style="font-weight:400">여러 해를 쌓으면 추세를 볼 수 있습니다. 입력이 있으면 위 [작년] 값보다 우선합니다.</span></div>
+    <div id="ue_stats"><span class="muted" style="font-size:12px">불러오는 중...</span></div>
+    <div class="row" style="margin-top:6px;gap:6px">
+      <div class="field" style="max-width:90px"><label>연도</label><input id="us_year" type="number" placeholder="2025"></div>
+      <div class="field" style="max-width:100px"><label>경쟁률</label><input id="us_comp" type="number" step="0.1" min="0"></div>
+      <div class="field" style="max-width:110px"><label>합격선(%)</label><input id="us_cut" type="number" step="0.1" min="0" max="100"></div>
+      <div class="field" style="flex:2"><label>산출 기준</label><input id="us_basis" placeholder="예: 150점 만점 70%컷 환산"></div>
+      <button class="btn sm" id="us_add" style="align-self:flex-end">추가/갱신</button></div>
+    <div id="us_msg" class="msg"></div></div>`;
   wrap.scrollIntoView({behavior:'smooth',block:'nearest'});
   $('ue_cancel').addEventListener('click',()=>wrap.innerHTML='');
+  loadUnivStats(uid,us,c);
+  $('us_add').addEventListener('click',async()=>{
+    const m=$('us_msg');m.className='msg';m.textContent='';
+    const year=Number($('us_year').value);
+    if(!year||year<2000||year>2100){m.className='msg err';m.textContent='연도를 확인하세요.';return;}
+    try{
+      await db.upsertUnivStat({university_id:uid,year,
+        competition:$('us_comp').value?Number($('us_comp').value):null,
+        cut_pct:$('us_cut').value?Number($('us_cut').value):null,
+        cut_basis:$('us_basis').value.trim()||null});
+      $('us_year').value='';$('us_comp').value='';$('us_cut').value='';$('us_basis').value='';
+      m.className='msg ok';m.textContent='저장되었습니다.';
+      loadUnivStats(uid,us,c);
+    }catch(e){m.className='msg err';m.textContent='실패: '+(e?.message||'오류');}
+  });
   $('ue_save').addEventListener('click',async()=>{const m=$('ue_msg');m.className='msg';
     try{await db.updateUniversity(uid,{exam_date:$('ue_date').value||null,quota:$('ue_quota').value?Number($('ue_quota').value):null,
       min_grade_rule:$('ue_mg').value.trim()||null,confirmed:$('ue_conf').value==='true',question_mix:$('ue_mix').value.trim()||null,essay_ratio:$('ue_ratio').value.trim()||null,
@@ -50,4 +75,31 @@ function editUniversity(uid,us,c){
     catch(e){m.className='msg err';m.textContent='실패: '+(e?.message||'오류');}});
 }
 
-export { renderUniversities, editUniversity };
+/* 연도별 실적 목록. 최신 연도가 위로 오고, 삭제는 단건으로만 한다. */
+async function loadUnivStats(uid,us,c){
+  const box=$('ue_stats');
+  if(!box)return;
+  let rows=[];
+  try{rows=await db.listUnivStats(uid);}catch(e){}
+  if(!rows.length){
+    box.innerHTML='<span class="muted" style="font-size:12px">등록된 연도별 실적이 없습니다.</span>';
+    return;
+  }
+  box.innerHTML=`<div style="overflow-x:auto"><table><thead><tr>
+      <th class="num">연도</th><th class="num">경쟁률</th><th class="num">합격선</th><th>산출 기준</th><th></th>
+    </tr></thead><tbody>
+    ${rows.map(s=>`<tr>
+      <td class="num"><b>${esc(s.year)}</b></td>
+      <td class="num">${s.competition!=null?esc(s.competition)+':1':'-'}</td>
+      <td class="num">${s.cut_pct!=null?esc(s.cut_pct)+'%':'-'}</td>
+      <td class="muted" style="font-size:12px">${esc(s.cut_basis||'미기재')}</td>
+      <td><button class="btn danger icon us_del" data-id="${esc(s.id)}">${svg('trash','xs')}</button></td>
+    </tr>`).join('')}
+    </tbody></table></div>`;
+  box.querySelectorAll('.us_del').forEach(b=>b.addEventListener('click',async()=>{
+    try{await db.deleteUnivStat(b.dataset.id);loadUnivStats(uid,us,c);}
+    catch(e){alert('삭제 실패: '+(e?.message||'오류'));}
+  }));
+}
+
+export { renderUniversities, editUniversity, loadUnivStats };
