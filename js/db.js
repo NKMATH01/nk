@@ -185,6 +185,17 @@ const db={
     const {data,error}=await app.sb.from('problems').insert(p).select().single();if(error)throw error;return data;},
   async updateProblem(id,patch){if(app.DEMO){const o=app.store.problems.find(x=>x.id===id);if(o)Object.assign(o,patch);return o;}
     const {error}=await app.sb.from('problems').update(Object.assign({updated_at:new Date().toISOString()},patch)).eq('id',id);if(error)throw error;},
+
+  /* ── 변형 문제 (관리자 전용) ── */
+  async listVariants(status){if(app.DEMO)return (app.store.problem_variants||[]).filter(v=>!status||v.review_status===status);
+    let q=app.sb.from('problem_variants').select('*').order('created_at',{ascending:false});
+    if(status)q=q.eq('review_status',status);
+    return await sbq(q,'변형 조회',[]);},
+  async generateVariant(sourceProblemId,variationSpec,count){if(app.DEMO)throw new Error('데모 모드에서는 변형을 생성하지 않습니다.');
+    return await apiFetch('/api/generate-variant',{method:'POST',
+      body:{source_problem_id:sourceProblemId,variation_spec:variationSpec,count}});},
+  async reviewVariant(variantId,action,note){if(app.DEMO)throw new Error('데모 모드에서는 검수할 수 없습니다.');
+    return await apiFetch('/api/variant-review',{method:'POST',body:{variant_id:variantId,action,note}});},
 };
 
 /* scores.photo_url 에는 이제 버킷 내 경로만 저장한다.

@@ -185,7 +185,29 @@ function buildDemoStore(){
   const firstQ=questions.find(q=>q.unit==='삼각함수')||questions[0];
   if(firstQ)firstQ.problem_id=pGacheon.id;
 
-  return {students,universities,student_targets,test_sessions,questions,scores,homework_records,essay_gradings,teacher_comments,counseling_notes,prescriptions,problems,accounts:[]};
+  // 변형 검수 큐 샘플 — 검증 통과(pending) 1건, 자동 폐기(regenerate) 1건
+  const problem_variants=[
+    {id:uuid(),source_problem_id:pGacheon.id,generated_problem_id:null,
+     model:'gemini-3.6-flash',prompt_version:'p1',
+     variation_spec:{mode:'numbers',note:null,difficulty_delta:0},
+     raw_response:{stem_latex:'삼각형 $ABC$ 에서 $\\angle A=\\frac{\\pi}{3}$ 이고 $b+c=14$ 일 때, 넓이의 최댓값을 구하시오.',
+       answer_closed:'$\\frac{49\\sqrt{3}}{4}$',answer_derived:'$\\frac{49\\sqrt{3}}{4}$',
+       solution_steps:['$S=\\frac{1}{2}bc\\sin A=\\frac{\\sqrt{3}}{4}bc$','$bc\\le\\left(\\frac{b+c}{2}\\right)^2=49$','따라서 최댓값은 $\\frac{49\\sqrt{3}}{4}$'],
+       rubric:[{criterion:'넓이 공식 적용',points:2,tag:'조건 해석'},{criterion:'산술기하 적용 근거',points:3,tag:'풀이 근거 누락'}],
+       points:10,difficulty:4,changed_summary:'b+c 값을 10에서 14로 변경'},
+     self_check:{stage:'independent',consistent:true,closed_answer:'$\\frac{49\\sqrt{3}}{4}$',
+       derived_answer:'$\\frac{49\\sqrt{3}}{4}$',independent_answer:'$\\frac{49\\sqrt{3}}{4}$',
+       matches:true,method:'code_execution',code_output:'[output]\n49*sqrt(3)/4'},
+     review_status:'pending',review_note:null,reviewed_at:null,created_at:'2026-07-28'},
+    {id:uuid(),source_problem_id:pGacheon.id,generated_problem_id:null,
+     model:'gemini-3.6-flash',prompt_version:'p1',
+     variation_spec:{mode:'condition',note:'사각형으로 변경',difficulty_delta:1},
+     raw_response:{stem_latex:'(생성 본문)',answer_closed:'$12$',answer_derived:'$14$',solution_steps:['...']},
+     self_check:{stage:'self_consistency',consistent:false,closed_answer:'$12$',derived_answer:'$14$'},
+     review_status:'regenerate',review_note:'정답 2회 계산 불일치로 자동 폐기',reviewed_at:null,created_at:'2026-07-28'},
+  ];
+
+  return {students,universities,student_targets,test_sessions,questions,scores,homework_records,essay_gradings,teacher_comments,counseling_notes,prescriptions,problems,problem_variants,accounts:[]};
 }
 
 export { buildDemoStore };

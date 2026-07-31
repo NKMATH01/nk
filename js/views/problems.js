@@ -127,7 +127,8 @@ async function renderProblems(c){
           ${p.license_scope === 'internal' ? '<span class="chip red">내부 전용</span>' : '<span class="chip gray">자체 제작</span>'}
           ${p.parent_id ? '<span class="chip purple">변형</span>' : ''}
         </div>
-        <div><button class="btn line sm pb_edit" data-pid="${esc(p.id)}">수정</button></div>
+        <div><button class="btn line sm pb_edit" data-pid="${esc(p.id)}">수정</button>
+          ${p.status === 'published' ? `<button class="btn line sm pb_variant" data-pid="${esc(p.id)}">${svg('spark','xs')}변형 생성</button>` : ''}</div>
       </div>
       <div style="margin-top:8px;font-size:13px">
         <b>${esc(p.unit || '-')} · ${esc(p.cognition || '-')}</b>
@@ -143,10 +144,21 @@ async function renderProblems(c){
           : '아직 출제되지 않았습니다.'}</div>
     </div>`;}).join('') : '<p class="muted">조건에 맞는 문항이 없습니다.</p>';
 
+  // 변형 검수 큐(pending) — 승인 전 문항이라 목록 맨 위에 둔다.
+  const pendingVariants = await db.listVariants('pending');
+  const problemById = {};
+  problems.forEach(p => problemById[p.id] = p);
+  const reviewCard = pendingVariants.length
+    ? `<div class="card" style="border-color:var(--purple)">
+        <h3>${svg('spark')}변형 검수 대기 <span class="sub">${pendingVariants.length}건 · 승인해도 곧바로 공개되지 않습니다(검토 상태로 등록)</span></h3>
+        ${pendingVariants.map(v => variantCardHTML(v, problemById[v.source_problem_id])).join('')}
+      </div>`
+    : '';
+
   c.innerHTML = `<div class="grid2" style="grid-template-columns:280px 1fr;align-items:start">
       <div>${filterCard}
         <button class="btn" id="pb_new" style="width:100%;margin-top:10px">${svg('plus','sm')}문항 등록</button></div>
-      <div><div id="pbEdit"></div>${cards}</div>
+      <div><div id="pbEdit"></div><div id="pbVariant"></div>${reviewCard}${cards}</div>
     </div>
     <div class="card note-blue">기출 원문은 내부 이용 범위에서만 사용합니다. 이 화면은 관리자 전용이며 학생·학부모 화면에는 노출되지 않습니다. 문항을 지우는 대신 [보관] 상태로 바꾸면 기록과 누적 실적이 보존됩니다.</div>`;
 
@@ -165,9 +177,137 @@ async function renderProblems(c){
   const nb = $('pb_new');
   if(nb) nb.addEventListener('click', () => { pbEditId = 'new'; openEditor(c, null, ctx); });
 
+  c.querySelectorAll('.pb_variant').forEach(b => b.addEventListener('click',
+    () => openVariantForm(c, problemById[b.dataset.pid])));
+  bindVariantReview(c);
+
   hydrateSignedPhotos(c);
-  c.querySelectorAll('.pb-body').forEach(el => renderMath(el));
+  c.querySelectorAll('.pb-body,.vr-math').forEach(el => renderMath(el));
   if(pbEditId) openEditor(c, pbEditId === 'new' ? null : problems.find(p => p.id === pbEditId), ctx);
+}
+
+/* 검수 카드 — 원본과 생성물을 나란히 놓고, 자동 검증 결과를 배지로 보여준다. */
+function variantCardHTML(v, src){
+  const r = v.raw_response || {};
+  const sc = v.self_check || {};
+  const checkChip = sc.matches === true
+    ? '<span class="chip green">독립 재풀이 일치</span>'
+    : sc.matches === false
+      ? '<span class="chip red">독립 재풀이 불일치</span>'
+      : '<span class="chip amber">독립 재풀이 미검증</span>';
+  const methodChip = sc.method === 'code_execution'
+    ? '<span class="chip blue">코드 실행 검산</span>'
+    : sc.method === 'no_code_execution'
+      ? '<span class="chip gray">코드 실행 불가 — 재풀이만</span>' : '';
+  return `<div style="border:1px solid var(--line);border-radius:11px;padding:12px;margin-bottom:10px" data-vid="${esc(v.id)}">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      ${checkChip}${methodChip}
+      <span class="chip gray">${esc((v.variation_spec && v.variation_spec.mode) || '-')}</span>
+      ${r.changed_summary ? `<span class="muted" style="font-size:11.5px">${esc(r.changed_summary)}</span>` : ''}
+    </div>
+    <div class="grid2">
+      <div>
+        <div class="muted" style="font-size:11.5px;font-weight:700;margin-bottom:4px">원본</div>
+        <div class="vr-math" style="font-size:12.5px;white-space:pre-wrap;padding:8px;background:var(--bg);border-radius:8px">${esc((src && src.body_latex) || '(원본 없음)')}</div>
+        ${src && src.answer_latex ? `<div class="muted" style="font-size:11.5px;margin-top:4px">정답: ${esc(src.answer_latex)}</div>` : ''}
+      </div>
+      <div>
+        <div class="muted" style="font-size:11.5px;font-weight:700;margin-bottom:4px">생성된 변형</div>
+        <div class="vr-math" style="font-size:12.5px;white-space:pre-wrap;padding:8px;background:#FBFAFF;border-radius:8px">${esc(r.stem_latex || '(본문 없음)')}</div>
+        <div class="muted" style="font-size:11.5px;margin-top:4px">정답: ${esc(r.answer_closed || '-')}</div>
+        ${sc.independent_answer ? `<div class="muted" style="font-size:11.5px">재풀이 답: ${esc(sc.independent_answer)}</div>` : ''}
+      </div>
+    </div>
+    ${Array.isArray(r.solution_steps) && r.solution_steps.length
+      ? `<details style="margin-top:8px"><summary style="font-size:12px;cursor:pointer">풀이 단계 보기</summary>
+          <div class="vr-math" style="font-size:12.5px;white-space:pre-wrap;padding:8px;background:var(--bg);border-radius:8px;margin-top:6px">${esc(r.solution_steps.join('\n'))}</div></details>` : ''}
+    ${sc.code_output ? `<details style="margin-top:6px"><summary style="font-size:12px;cursor:pointer">검산 코드·출력 보기</summary>
+      <pre style="font-size:11px;white-space:pre-wrap;background:var(--bg);padding:8px;border-radius:8px;margin-top:6px">${esc(String(sc.code_output).slice(0,2000))}</pre></details>` : ''}
+    <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <input class="vr_note" placeholder="검수 메모(선택)" style="flex:1;min-width:160px;padding:6px 8px;border:1.5px solid var(--line);border-radius:8px;font-size:12px">
+      <button class="btn sm vr_act" data-vid="${esc(v.id)}" data-act="approve">승인</button>
+      <button class="btn line sm vr_act" data-vid="${esc(v.id)}" data-act="regenerate">재생성 필요</button>
+      <button class="btn danger sm vr_act" data-vid="${esc(v.id)}" data-act="reject">거부</button>
+    </div>
+    <div class="vr_msg msg"></div>
+  </div>`;
+}
+
+/* 변형 생성 폼. 키가 없으면 폼 대신 안내만 띄운다. */
+async function openVariantForm(c, src){
+  const wrap = $('pbVariant');
+  if(!wrap || !src) return;
+  wrap.innerHTML = '<div class="card"><p class="muted">확인 중...</p></div>';
+
+  if(app.DEMO){
+    wrap.innerHTML = '<div class="card"><span class="chip gray">데모 모드 — 변형 생성을 실행하지 않습니다</span></div>';
+    return;
+  }
+  const status = await db.getAiStatus();
+  if(!status || !status.configured){
+    wrap.innerHTML = '<div class="card"><span class="chip amber">AI 미설정</span>'
+      + '<p class="muted" style="font-size:12.5px;margin-top:6px">GEMINI_API_KEY 가 등록되지 않아 변형 생성을 사용할 수 없습니다. [설정] 화면의 AI 상태 카드를 참고하세요.</p>'
+      + '<button class="btn line sm" id="vf_close">닫기</button></div>';
+    $('vf_close')?.addEventListener('click', () => wrap.innerHTML = '');
+    return;
+  }
+
+  wrap.innerHTML = `<div class="card" style="border-color:var(--purple)">
+    <h3>${svg('spark')}변형 생성 <span class="sub">${esc(src.source_citation || '')}</span></h3>
+    <div class="row">
+      <div class="field"><label>변형 방식</label><select id="vf_mode">
+        <option value="numbers">숫자만 변경(구조 유지)</option>
+        <option value="condition">조건 변경</option>
+        <option value="difficulty">난이도 조정</option></select></div>
+      <div class="field"><label>난이도</label><select id="vf_dd">
+        <option value="0">원본 유지</option><option value="1">+1 (어렵게)</option><option value="-1">-1 (쉽게)</option></select></div>
+      <div class="field"><label>생성 개수</label><select id="vf_count">
+        <option value="1">1개</option><option value="2">2개</option><option value="3">3개</option></select></div>
+    </div>
+    <div class="field" style="margin-top:8px"><label>조건 변경 설명 <span class="muted" style="font-size:11px">(조건 변경 선택 시)</span></label>
+      <input id="vf_note" placeholder="예: 삼각형을 사각형으로 바꾸고 둘레 조건을 추가"></div>
+    <div class="muted" style="font-size:11.5px;margin-top:8px">생성 후 정답을 두 번 계산해 비교하고, 별도로 한 번 더 풀어 검산합니다. 어긋나면 자동 폐기되어 검수 목록에 올라오지 않습니다. 통과한 것도 <b>강사 승인</b>이 있어야 문제은행에 들어갑니다.</div>
+    <div style="margin-top:8px"><button class="btn" id="vf_go">생성</button> <button class="btn line" id="vf_cancel">닫기</button></div>
+    <div id="vf_msg" class="msg"></div>
+  </div>`;
+
+  $('vf_cancel').addEventListener('click', () => wrap.innerHTML = '');
+  $('vf_go').addEventListener('click', async () => {
+    const m = $('vf_msg'); m.className = 'msg'; m.textContent = '';
+    const btn = $('vf_go'); btn.disabled = true;
+    m.textContent = '생성 중... 문항당 3~4회 호출이라 30초 이상 걸릴 수 있습니다.';
+    try{
+      const r = await db.generateVariant(src.id, {
+        mode: $('vf_mode').value,
+        note: $('vf_note').value.trim() || null,
+        difficulty_delta: Number($('vf_dd').value) || 0,
+      }, Number($('vf_count').value) || 1);
+      const pend = r.pending || 0, disc = r.discarded || 0;
+      m.className = 'msg ok';
+      m.textContent = `검수 대기 ${pend}건` + (disc ? ` · 자동 폐기 ${disc}건(정답 검증 실패)` : '');
+      if(pend) setTimeout(() => renderProblems(c), 900);
+    }catch(e){ m.className = 'msg err'; m.textContent = '생성 실패: ' + (e?.message || '오류'); }
+    finally{ btn.disabled = false; }
+  });
+}
+
+function bindVariantReview(c){
+  c.querySelectorAll('.vr_act').forEach(btn => btn.addEventListener('click', async () => {
+    const card = btn.closest('[data-vid]');
+    const m = card ? card.querySelector('.vr_msg') : null;
+    const note = card ? (card.querySelector('.vr_note')?.value || '').trim() : '';
+    if(m){ m.className = 'msg'; m.textContent = '처리 중...'; }
+    try{
+      const r = await db.reviewVariant(btn.dataset.vid, btn.dataset.act, note || null);
+      if(m){
+        m.className = 'msg ok';
+        m.textContent = btn.dataset.act === 'approve'
+          ? '승인되어 문제은행에 [검토] 상태로 등록되었습니다. 공개하려면 해당 카드에서 상태를 바꾸세요.'
+          : '처리되었습니다.';
+      }
+      setTimeout(() => renderProblems(c), 900);
+    }catch(e){ if(m){ m.className = 'msg err'; m.textContent = '실패: ' + (e?.message || '오류'); } }
+  }));
 }
 
 /* 등록/수정 폼. rubric 편집은 Phase 4 감점 항목 UI 와 같은 패턴을 쓴다. */
@@ -319,4 +459,4 @@ function openEditor(c, p, ctx){
 }
 
 // openEditor 는 버튼 클릭으로만 열리는 경로라 테스트에서 직접 호출할 수 있게 함께 내보낸다.
-export { renderProblems, openEditor, ORIGINS, STATUS_LABEL, STATUS_CLS };
+export { renderProblems, openEditor, openVariantForm, variantCardHTML, ORIGINS, STATUS_LABEL, STATUS_CLS };

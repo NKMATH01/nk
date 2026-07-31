@@ -70,6 +70,9 @@ async function callGemini(parts, opts){
   }
   const body = { contents: [{ role: "user", parts: parts }], generationConfig: generationConfig };
   if(o.systemInstruction) body.systemInstruction = { parts: [{ text: o.systemInstruction }] };
+  // 코드 실행 등 도구 사용. responseSchema 와 함께 쓰면 거부하는 경우가 있어
+  // 도구를 쓸 때는 호출부가 schema 를 주지 않는 것을 전제로 한다.
+  if(o.tools) body.tools = o.tools;
 
   const url = API_BASE + encodeURIComponent(model()) + ":generateContent";
   let res;
@@ -111,7 +114,14 @@ async function callGemini(parts, opts){
   }
   if(!cand) return { ok: false, blocked: "NO_CANDIDATE", tokensIn, tokensOut, costUsd, model: model(), raw: data };
 
-  const out = ((cand.content && cand.content.parts) || []).map(p => p.text || "").join("").trim();
+  const partsOut = (cand.content && cand.content.parts) || [];
+  const out = partsOut.map(p => p.text || "").join("").trim();
+  // 코드 실행 도구를 쓴 경우 실행 결과를 따로 모아 둔다(검증 근거로 저장).
+  const codeOutput = partsOut
+    .filter(p => p.codeExecutionResult || p.executableCode)
+    .map(p => p.executableCode ? ("[code]\n" + (p.executableCode.code || ""))
+      : ("[output]\n" + ((p.codeExecutionResult && p.codeExecutionResult.output) || "")))
+    .join("\n");
   let json = null;
   if(o.schema){
     try{ json = JSON.parse(out); }
@@ -124,7 +134,7 @@ async function callGemini(parts, opts){
   if(finish === "MAX_TOKENS"){
     return { ok: false, blocked: "MAX_TOKENS", tokensIn, tokensOut, costUsd, model: model(), raw: data };
   }
-  return { ok: true, json, text: out, tokensIn, tokensOut, costUsd, model: model(), raw: data };
+  return { ok: true, json, text: out, codeOutput, tokensIn, tokensOut, costUsd, model: model(), raw: data };
 }
 
 /* ── responseSchema 조립 ── */
