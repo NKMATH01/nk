@@ -35,13 +35,17 @@ function editUniversity(uid,us,c){
     <div class="row" style="margin-top:8px"><div class="field"><label>작년 경쟁률</label><input id="ue_comp" type="number" step="0.1" min="0" value="${u.last_competition!=null?esc(u.last_competition):''}" placeholder="예: 21.5"></div>
       <div class="field"><label>작년 합격선(%)</label><input id="ue_cut" type="number" step="0.1" min="0" max="100" value="${u.last_cut_pct!=null?esc(u.last_cut_pct):''}" placeholder="예: 72"></div>
       <div class="field" style="flex:2"><label>작년 결과 비고/출처</label><input id="ue_note" value="${esc(u.last_result_note||'')}" placeholder="출처·비고"></div></div>
+    <div class="row" style="margin-top:8px"><div class="field" style="flex:1"><label>합격선 산출 기준</label>
+      <input id="ue_basis" value="${esc(u.last_cut_basis||'')}" placeholder="예: 150점 만점 70%컷 환산">
+      <div class="muted" style="font-size:11.5px;margin-top:4px">이 값을 입력해야 [합격 가능성] 화면에서 첨삭 점수와 합격선 격차를 비교합니다. 비워 두면 비교를 생략합니다(기준이 다른 값끼리 비교해 오판하는 것을 막기 위함).</div></div></div>
     <button class="btn" id="ue_save">${svg('check','sm')}저장</button> <button class="btn line" id="ue_cancel">닫기</button><div id="ue_msg" class="msg"></div></div>`;
   wrap.scrollIntoView({behavior:'smooth',block:'nearest'});
   $('ue_cancel').addEventListener('click',()=>wrap.innerHTML='');
   $('ue_save').addEventListener('click',async()=>{const m=$('ue_msg');m.className='msg';
     try{await db.updateUniversity(uid,{exam_date:$('ue_date').value||null,quota:$('ue_quota').value?Number($('ue_quota').value):null,
       min_grade_rule:$('ue_mg').value.trim()||null,confirmed:$('ue_conf').value==='true',question_mix:$('ue_mix').value.trim()||null,essay_ratio:$('ue_ratio').value.trim()||null,
-      last_competition:$('ue_comp').value?Number($('ue_comp').value):null,last_cut_pct:$('ue_cut').value?Number($('ue_cut').value):null,last_result_note:$('ue_note').value.trim()||null});
+      last_competition:$('ue_comp').value?Number($('ue_comp').value):null,last_cut_pct:$('ue_cut').value?Number($('ue_cut').value):null,last_result_note:$('ue_note').value.trim()||null,
+      last_cut_basis:$('ue_basis').value.trim()||null});
       m.className='msg ok';m.textContent='저장됨';renderUniversities(c);}
     catch(e){m.className='msg err';m.textContent='실패: '+(e?.message||'오류');}});
 }

@@ -1,5 +1,5 @@
 /* 대시보드. 행 클릭 시 이동하는 navigate 는 순환 import 를 피하려고 app 을 경유한다. */
-import { band, computeReadiness, heatFromRecords, shortfallContribution } from '../calc.js';
+import { band, cellRateSince, computeReadiness, heatFromRecords, judgePrescription, shortfallContribution } from '../calc.js';
 import { COGNITIONS, UNITS } from '../config.js';
 import { db, loadContext, studentBundle } from '../db.js';
 import { svg } from '../icons.js';
@@ -31,7 +31,7 @@ async function renderDashboard(c){
   const rows=[];
   for(const st of active){
     const b=await studentBundle(st.id,ctx);
-    const {readiness}=computeReadiness({weeklyPercents:b.weeklyPercents,questionRecords:b.questionRecords,essays:b.essayInputs,homeworks:b.homeworks});
+    const {readiness,coverage}=computeReadiness({weeklyPercents:b.weeklyPercents,weeklyScaled:b.weeklyScaled,questionRecords:b.questionRecords,essays:b.essayInputs,homeworks:b.homeworks});
     const heat=heatFromRecords(b.questionRecords);
     // 취약 1순위
     const cells=[];const totPts=b.questionRecords.reduce((s,r)=>s+r.points,0)||1;
@@ -47,9 +47,14 @@ async function renderDashboard(c){
     // 목표 1지망
     const t1=ctx.targets.filter(t=>t.student_id===st.id).sort((a,b)=>a.priority-b.priority)[0];
     const uni=t1?ctx.universities.find(u=>u.id===t1.university_id):null;
-    rows.push({st,readiness,lastPct,delta,weak,entered,uni,lastCounsel:lastCounselBy[st.id]||null});
+    rows.push({st,readiness,coverage,records:b.questionRecords,lastPct,delta,weak,entered,uni,lastCounsel:lastCounselBy[st.id]||null});
   }
   saveReadinessSnapshots(rows);
+  // 진행 중 처방 — 배정 이후 회차로 개선 여부 자동 판정
+  const allRx=await db.listPrescriptions(null);
+  const recById={};rows.forEach(r=>recById[r.st.id]=r.records);
+  const nameById={};rows.forEach(r=>nameById[r.st.id]=r.st.name);
+  const activeRx=allRx.filter(p=>p.status==='active');
   // KPI
   const avgLatest=(()=>{if(!latest)return null;let e=0,p=0;const qids=ctx.questions.filter(q=>q.session_id===latest.id);
     // 반평균 = 최근회차 학생 평균 점수%
@@ -73,7 +78,7 @@ async function renderDashboard(c){
     return '<span class="delta flat">0</span>';};
   const tbl=`<div class="card"><h3>${svg('users')}학생 현황 <span class="sub">행을 클릭하면 취약 진단으로 이동합니다</span></h3>
     <div style="overflow-x:auto"><table><thead><tr>
-      <th>학생</th><th>학년</th><th>목표(1지망)</th><th class="num">최근점수</th><th class="num">증감</th><th class="num">준비도</th><th>밴드</th><th>취약 1순위</th><th>이번주</th><th>최근 상담일</th>
+      <th>학생</th><th>학년</th><th>목표(1지망)</th><th class="num">최근점수</th><th class="num">증감</th><th class="num">준비도</th><th>밴드</th><th class="num">진도 커버리지</th><th>취약 1순위</th><th>이번주</th><th>최근 상담일</th>
     </tr></thead><tbody>
     ${rows.map(r=>`<tr data-sid="${esc(r.st.id)}" style="cursor:pointer">
       <td><b>${esc(r.st.name)}</b></td><td>${esc(r.st.grade_type)}</td>
@@ -82,6 +87,7 @@ async function renderDashboard(c){
       <td class="num">${deltaHTML(r.delta)}</td>
       <td class="num"><b>${r.readiness==null?'-':r1(r.readiness)+'%'}</b></td>
       <td>${r.readiness==null?'<span class="chip gray">N/A</span>':bandChip(r.readiness)}</td>
+      <td class="num muted">${r.coverage==null?'-':Math.round(r.coverage)+'%'}</td>
       <td>${r.weak?`<span class="chip red">${esc(r.weak.unit)}·${esc(r.weak.cognition)}</span>`:'<span class="muted">-</span>'}</td>
       <td>${r.entered?'<span class="chip green">완료</span>':'<span class="chip amber">미입력</span>'}</td>
       <td class="muted">${r.lastCounsel?esc(fmtDate(r.lastCounsel)):'-'}</td>
@@ -93,7 +99,25 @@ async function renderDashboard(c){
       <div><b>${esc(u.name)}</b>${u.campus?` <span class="muted">(${esc(u.campus)})</span>`:''} <span class="muted" style="font-size:11.5px">${esc(fmtDate(u.exam_date))}</span></div>
       <span class="pill"><span class="dday">${ddayLabel(u.exam_date)}</span></span></div>`).join(''):'<p class="muted">등록된 고사일이 없습니다.</p>'}</div>`;
 
-  c.innerHTML=kpi+'<div style="height:16px"></div>'+`<div class="grid2" style="grid-template-columns:1.7fr 1fr">${tbl}${sched}</div>`;
+  const rxRows=activeRx.map(p=>{
+    const cur=cellRateSince(recById[p.student_id]||[],p.unit,p.cognition,p.created_at?String(p.created_at).slice(0,10):null);
+    const j=judgePrescription(p.baseline_rate,cur);
+    const overdue=p.due_date&&daysUntil(p.due_date)<0;
+    return `<tr data-sid="${esc(p.student_id)}" style="cursor:pointer">
+      <td><b>${esc(nameById[p.student_id]||'-')}</b></td>
+      <td>${esc(p.unit)} · ${esc(p.cognition)}</td>
+      <td class="num muted">${p.baseline_rate==null?'-':r1(p.baseline_rate)+'%'}</td>
+      <td class="num">${cur==null?'<span class="muted">-</span>':r1(cur)+'%'}</td>
+      <td><span class="chip ${j.cls}">${j.label}</span>${j.delta==null?'':` <span class="muted" style="font-size:11px">${j.delta>0?'+':''}${r1(j.delta)}%p</span>`}</td>
+      <td class="muted">${p.due_date?esc(fmtDate(p.due_date))+(overdue?' <span class="chip red">기한 초과</span>':''):'-'}</td>
+    </tr>`;}).join('');
+  const rxCard=`<div class="card"><h3>${svg('clipboardCheck')}진행 중 처방 <span class="sub">배정 이후 실시된 주간테스트로 자동 판정 · 행 클릭 시 취약 진단으로 이동</span></h3>
+    ${activeRx.length?`<div style="overflow-x:auto"><table><thead><tr>
+      <th>학생</th><th>보완 대상</th><th class="num">기준선</th><th class="num">재측정</th><th>판정</th><th>기한</th>
+    </tr></thead><tbody>${rxRows}</tbody></table></div>`
+    :'<p class="muted">진행 중인 처방이 없습니다. [취약 진단]에서 배정하세요.</p>'}</div>`;
+
+  c.innerHTML=kpi+'<div style="height:16px"></div>'+`<div class="grid2" style="grid-template-columns:1.7fr 1fr">${tbl}${sched}</div>`+rxCard;
   c.querySelectorAll('tr[data-sid]').forEach(tr=>tr.addEventListener('click',()=>{app.cur.studentId=tr.dataset.sid;app.navigate('diagnosis');}));
 }
 

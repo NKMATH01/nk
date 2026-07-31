@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import {
   ewma, computeReadiness, weightedRecent3, shortfallContribution,
   hwAccuracyAvg, hwTimeAvg, band, admitBand,
+  sessionPercentRows, cohortSessionStats, standardizeWeekly,
+  cellRateSince, judgePrescription, essayRangeFor,
 } from './calc.js';
 
 let passed = 0;
@@ -62,20 +64,23 @@ t('주간점수+과제: 30:10 비율로 가중 평균', () => {
   assert.equal(r.parts.length, 2);
   near(r.readiness, 72.5);
 });
-t('문항기록은 coverage(25)와 mastery(20) 두 항목을 만든다', () => {
+t('coverage 는 준비도 가중 항목에서 빠지고 별도 값으로 반환된다', () => {
   const r = computeReadiness({
     questionRecords: [{ unit: '미분', points: 10, earned: 10 }],
   });
-  const keys = r.parts.map(p => p.key).sort();
-  assert.deepEqual(keys, ['coverage', 'mastery']);
-  // 6단원 중 1단원 커버 = 16.666..., 만점이므로 mastery = 100
-  const cov = r.parts.find(p => p.key === 'coverage');
-  near(cov.value, 100 / 6);
-  near(r.parts.find(p => p.key === 'mastery').value, 100);
-  // 25:20 재정규화 -> (100/6)*(25/45) + 100*(20/45)
-  near(r.readiness, (100 / 6) * (25 / 45) + 100 * (20 / 45));
+  // 진도를 얼마나 훑었는지는 실력이 아니므로 점수에 섞지 않는다
+  assert.deepEqual(r.parts.map(p => p.key), ['mastery']);
+  assert.ok(!r.parts.some(p => p.key === 'coverage'));
+  // 6단원 중 1단원 커버
+  near(r.coverage, 100 / 6);
+  // mastery 단독이므로 readiness = mastery
+  near(r.readiness, 100);
 });
-t('모든 항목이 있으면 가중치 합이 100이라 재정규화가 항등이 된다', () => {
+t('coverage 는 문항기록이 없으면 null', () => {
+  assert.equal(computeReadiness({}).coverage, null);
+  assert.equal(computeReadiness({ weeklyPercents: [80] }).coverage, null);
+});
+t('모든 항목이 있으면 가중치 합이 75(=30+20+15+10)', () => {
   const r = computeReadiness({
     weeklyPercents: [60],
     questionRecords: [
@@ -85,9 +90,17 @@ t('모든 항목이 있으면 가중치 합이 100이라 재정규화가 항등�
     essays: [{ earned: 30, max: 50 }],
     homeworks: [{ problems_total: 10, problems_correct: 6 }],
   });
-  assert.equal(r.parts.reduce((s, p) => s + p.weight, 0), 100);
-  const manual = r.parts.reduce((s, p) => s + p.value * (p.weight / 100), 0);
+  assert.equal(r.parts.reduce((s, p) => s + p.weight, 0), 75);
+  const manual = r.parts.reduce((s, p) => s + p.value * (p.weight / 75), 0);
   near(r.readiness, manual);
+  // 진도 커버리지는 별도로 나온다(2/6 단원)
+  near(r.coverage, 200 / 6);
+});
+t('weeklyScaled 가 있으면 원점수 대신 그것을 쓴다', () => {
+  const raw = computeReadiness({ weeklyPercents: [90] });
+  const scaled = computeReadiness({ weeklyPercents: [90], weeklyScaled: [30] });
+  near(raw.readiness, 90);
+  near(scaled.readiness, 30);
 });
 t('값은 0~100 으로 clamp 된다', () => {
   const r = computeReadiness({ weeklyPercents: [999] });
@@ -173,6 +186,111 @@ t('보정된 기준선 아래로 내려가면 도전', () => {
 t('보정값은 -10~+10 으로 제한된다', () => {
   const r = admitBand(70, { last_competition: 9999, last_cut_pct: 9999 });
   assert.ok(r.delta <= 10);
+});
+
+console.log('회차 난이도 보정 — 코호트 z 표준화');
+t('sessionPercentRows 는 학생×회차로 집계한다', () => {
+  const questions = [{ id: 'q1', session_id: 's1', points: 10 }, { id: 'q2', session_id: 's1', points: 10 }];
+  const sessions = [{ id: 's1', total_score: 20 }];
+  const scores = [
+    { question_id: 'q1', student_id: 'A', earned: 10 },
+    { question_id: 'q2', student_id: 'A', earned: 5 },
+    { question_id: 'q1', student_id: 'B', earned: 4 },
+  ];
+  const rows = sessionPercentRows(scores, questions, sessions);
+  assert.equal(rows.length, 2);
+  const a = rows.find(r => r.student_id === 'A');
+  near(a.percent, 75);                    // 15/20
+  near(rows.find(r => r.student_id === 'B').percent, 20);  // 4/20
+});
+t('total_score 가 없으면 배점 합계를 분모로 쓴다', () => {
+  const rows = sessionPercentRows(
+    [{ question_id: 'q1', student_id: 'A', earned: 5 }],
+    [{ id: 'q1', session_id: 's1', points: 10 }],
+    [{ id: 's1', total_score: null }]);
+  near(rows[0].percent, 50);
+});
+t('cohortSessionStats 는 회차별 평균·표준편차(모표준편차)', () => {
+  const st = cohortSessionStats([
+    { session_id: 's1', percent: 40 },
+    { session_id: 's1', percent: 60 },
+  ]);
+  near(st.s1.mean, 50);
+  near(st.s1.sd, 10);
+  assert.equal(st.s1.n, 2);
+});
+t('평균 위 1σ 는 60점, 아래 1σ 는 40점으로 재스케일', () => {
+  const stats = { s1: { mean: 50, sd: 10, n: 5 } };
+  near(standardizeWeekly([{ session_id: 's1', percent: 60 }], stats)[0], 60);
+  near(standardizeWeekly([{ session_id: 's1', percent: 40 }], stats)[0], 40);
+  near(standardizeWeekly([{ session_id: 's1', percent: 50 }], stats)[0], 50);
+});
+t('어려운 회차의 같은 원점수가 더 높게 평가된다', () => {
+  const easy = { s1: { mean: 80, sd: 10, n: 5 } };
+  const hard = { s1: { mean: 40, sd: 10, n: 5 } };
+  const raw = [{ session_id: 's1', percent: 60 }];
+  assert.ok(standardizeWeekly(raw, hard)[0] > standardizeWeekly(raw, easy)[0]);
+});
+t('전원 동점(σ=0)이면 50', () => {
+  near(standardizeWeekly([{ session_id: 's1', percent: 77 }], { s1: { mean: 77, sd: 0, n: 4 } })[0], 50);
+});
+t('비교군이 2명 미만이면 보정하지 않고 원점수를 쓴다', () => {
+  // 학생 계정은 RLS 때문에 본인 점수만 보이므로 이 경로를 탄다
+  near(standardizeWeekly([{ session_id: 's1', percent: 77 }], { s1: { mean: 77, sd: 0, n: 1 } })[0], 77);
+  near(standardizeWeekly([{ session_id: 's1', percent: 77 }], {})[0], 77);
+});
+t('보정 결과는 0~100 으로 clamp', () => {
+  const stats = { s1: { mean: 50, sd: 1, n: 5 } };
+  const hi = standardizeWeekly([{ session_id: 's1', percent: 100 }], stats)[0];
+  const lo = standardizeWeekly([{ session_id: 's1', percent: 0 }], stats)[0];
+  assert.ok(hi <= 100 && lo >= 0);
+});
+
+console.log('처방-재측정 판정');
+t('배정 이후 회차만 집계한다', () => {
+  const rec = [
+    { unit: '삼각함수', cognition: '활용', points: 10, earned: 2, date: '2026-06-01' },  // 배정 전
+    { unit: '삼각함수', cognition: '활용', points: 10, earned: 9, date: '2026-07-01' },  // 배정 후
+  ];
+  near(cellRateSince(rec, '삼각함수', '활용', '2026-06-15'), 90);
+  near(cellRateSince(rec, '삼각함수', '활용', null), 55);   // 전체
+});
+t('해당 셀 데이터가 없으면 null', () => {
+  assert.equal(cellRateSince([], '미분', '개념', null), null);
+  assert.equal(cellRateSince([{ unit: '미분', cognition: '개념', points: 0, earned: 0, date: '2026-07-01' }], '미분', '개념', null), null);
+});
+t('+5%p 이상이면 개선', () => {
+  const j = judgePrescription(50, 56);
+  assert.equal(j.key, 'improved');
+  near(j.delta, 6);
+});
+t('-5%p 이하면 악화', () => assert.equal(judgePrescription(50, 44).key, 'worse'));
+t('경계 ±5%p 미만 변화는 정체(측정 잡음으로 본다)', () => {
+  assert.equal(judgePrescription(50, 54).key, 'flat');
+  assert.equal(judgePrescription(50, 46).key, 'flat');
+  assert.equal(judgePrescription(50, 55).key, 'improved');   // 경계 포함
+  assert.equal(judgePrescription(50, 45).key, 'worse');
+});
+t('재측정 데이터가 없으면 대기', () => {
+  assert.equal(judgePrescription(50, null).key, 'pending');
+  assert.equal(judgePrescription(null, 60).key, 'pending');
+});
+
+console.log('대학별 첨삭 실적 구간');
+const ESSAYS = [
+  { univ_name: '국민대', cond_earned: 8, cond_max: 10, proc_earned: 16, proc_max: 20, ans_earned: 6, ans_max: 10 }, // 30/40=75
+  { univ_name: '국민대', cond_earned: 5, cond_max: 10, proc_earned: 10, proc_max: 20, ans_earned: 5, ans_max: 10 }, // 20/40=50
+  { univ_name: '가천대', cond_earned: 9, cond_max: 10, proc_earned: 18, proc_max: 20, ans_earned: 9, ans_max: 10 },
+];
+t('대학명이 일치하는 첨삭만 집계한다', () => {
+  const r = essayRangeFor(ESSAYS, '국민대');
+  assert.equal(r.n, 2);
+  near(r.min, 50); near(r.max, 75); near(r.avg, 62.5);
+});
+t('표본이 없으면 null', () => assert.equal(essayRangeFor(ESSAYS, '서경대'), null));
+t('limit 으로 최근 n회만 본다', () => assert.equal(essayRangeFor(ESSAYS, '국민대', 1).n, 1));
+t('만점이 0인 첨삭은 제외한다(0으로 나누지 않음)', () => {
+  assert.equal(essayRangeFor([{ univ_name: 'X', cond_max: 0, proc_max: 0, ans_max: 0 }], 'X'), null);
 });
 
 console.log('\n' + passed + ' passed' + (process.exitCode ? ' / 일부 실패' : ' / 전부 통과'));

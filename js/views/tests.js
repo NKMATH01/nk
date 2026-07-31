@@ -84,11 +84,56 @@ async function renderQuestionDef(body,c){
       <td><input class="q_pts" type="number" min="0" value="${q?esc(q.points):0}" style="width:76px;padding:6px 8px;border:1.5px solid var(--line);border-radius:7px"></td>
       <td><input class="q_src" value="${q&&q.source?esc(q.source):''}" placeholder="예: 수특 미적분 6-12" style="width:100%;padding:6px 8px;border:1.5px solid var(--line);border-radius:7px"></td>
       <td><button class="btn danger icon q_del">${svg('trash','xs')}</button></td>`;
-    tr.querySelector('.q_del').addEventListener('click',()=>{tr.remove();renumber();});
-    tr.querySelector('.q_pts').addEventListener('input',updateSum);
-    tb.appendChild(tr);
+    // 감점 항목 편집 행 — 채점 그리드에서 체크박스로 쓰인다
+    const dtr=document.createElement('tr');
+    dtr.className='ded-row';
+    dtr.innerHTML=`<td></td><td colspan="5" style="padding-top:0">
+      <details class="ded-wrap"${(q&&q.deduction_items&&q.deduction_items.length)?' open':''}>
+        <summary style="font-size:12px;cursor:pointer;color:var(--ink-2)">감점 항목 <span class="ded-count chip gray"></span></summary>
+        <div class="ded-list" style="margin-top:6px"></div>
+        <button type="button" class="btn line sm ded-add" style="margin-top:6px">${svg('plus','xs')}감점 항목 추가</button>
+        <div class="ded-msg muted" style="font-size:11.5px;margin-top:4px"></div>
+      </details></td>`;
+    tr._ded=dtr;
+    tr.querySelector('.q_del').addEventListener('click',()=>{dtr.remove();tr.remove();renumber();});
+    tr.querySelector('.q_pts').addEventListener('input',()=>{updateSum();checkDed(tr);});
+    tb.appendChild(tr);tb.appendChild(dtr);
+
+    const list=dtr.querySelector('.ded-list');
+    const addDed=(d)=>{
+      const row=document.createElement('div');
+      row.className='ded-item';
+      row.style.cssText='display:flex;gap:6px;align-items:center;margin-bottom:4px';
+      row.innerHTML=`<input class="d_label" value="${d&&d.label?esc(d.label):''}" placeholder="감점 사유(예: 조건 누락)" style="flex:2;padding:5px 7px;border:1.5px solid var(--line);border-radius:7px;font-size:12px">
+        <input class="d_pts" type="number" min="0" step="0.5" value="${d&&d.points!=null?esc(d.points):1}" style="width:64px;padding:5px 7px;border:1.5px solid var(--line);border-radius:7px;font-size:12px">
+        <select class="d_tag" style="flex:1;padding:5px 7px;border:1.5px solid var(--line);border-radius:7px;font-size:12px">
+          <option value="">태그 없음</option>${WRONG_REASONS.map(r=>`<option ${d&&d.tag===r?'selected':''}>${esc(r)}</option>`).join('')}</select>
+        <button type="button" class="btn danger icon d_del">${svg('trash','xs')}</button>`;
+      row.querySelector('.d_del').addEventListener('click',()=>{row.remove();checkDed(tr);});
+      row.querySelector('.d_pts').addEventListener('input',()=>checkDed(tr));
+      list.appendChild(row);checkDed(tr);
+    };
+    (q&&Array.isArray(q.deduction_items)?q.deduction_items:[]).forEach(addDed);
+    dtr.querySelector('.ded-add').addEventListener('click',()=>addDed(null));
+    checkDed(tr);
   }
-  function renumber(){[...tb.children].forEach((tr,i)=>tr.querySelector('.qnocell').textContent=i+1);updateSum();}
+  /* 감점 합계가 배점을 넘으면 저장을 막는다(음수 점수 방지). */
+  function checkDed(tr){
+    const dtr=tr._ded;if(!dtr)return true;
+    const max=Number(tr.querySelector('.q_pts').value)||0;
+    const items=[...dtr.querySelectorAll('.ded-item')];
+    const sum=items.reduce((s,r)=>s+(Number(r.querySelector('.d_pts').value)||0),0);
+    const cnt=dtr.querySelector('.ded-count');
+    cnt.textContent=items.length?items.length+'개':'없음';
+    const over=items.length&&sum>max;
+    cnt.className='chip '+(over?'red':(items.length?'blue':'gray'));
+    const msg=dtr.querySelector('.ded-msg');
+    msg.textContent=over?('감점 합계 '+sum+'점이 배점 '+max+'점을 초과합니다.'):(items.length?('감점 합계 '+sum+' / 배점 '+max):'');
+    msg.style.color=over?'var(--red)':'';
+    return !over;
+  }
+  function qRows(){return [...tb.children].filter(tr=>!tr.classList.contains('ded-row'));}
+  function renumber(){qRows().forEach((tr,i)=>tr.querySelector('.qnocell').textContent=i+1);updateSum();}
   function updateSum(){let sum=0;tb.querySelectorAll('.q_pts').forEach(i=>sum+=Number(i.value)||0);
     const el=$('ptsum');el.textContent='배점 합계 '+sum+' / 총점 '+sess.total_score;
     el.className='chip '+(sum===Number(sess.total_score)?'green':'red');}
@@ -97,11 +142,19 @@ async function renderQuestionDef(body,c){
   $('qadd').addEventListener('click',()=>{addRow({unit:UNITS[0],cognition:COGNITIONS[0],points:0,source:null});renumber();});
   $('qsave').addEventListener('click',async()=>{
     const m=$('qmsg');m.className='msg';m.textContent='';
-    const rows=[];let bad=false;
-    [...tb.children].forEach((tr,i)=>{const pts=Number(tr.querySelector('.q_pts').value);if(isNaN(pts)||pts<0)bad=true;
-      rows.push({no:i+1,unit:tr.querySelector('.q_unit').value,cognition:tr.querySelector('.q_cog').value,points:pts,source:tr.querySelector('.q_src').value.trim()||null});});
+    const rows=[];let bad=false,dedOver=false;
+    qRows().forEach((tr,i)=>{const pts=Number(tr.querySelector('.q_pts').value);if(isNaN(pts)||pts<0)bad=true;
+      if(!checkDed(tr))dedOver=true;
+      const items=[...(tr._ded?tr._ded.querySelectorAll('.ded-item'):[])].map(r=>({
+        label:r.querySelector('.d_label').value.trim(),
+        points:Number(r.querySelector('.d_pts').value)||0,
+        tag:r.querySelector('.d_tag').value||null,
+      })).filter(d=>d.label&&d.points>0);
+      rows.push({no:i+1,unit:tr.querySelector('.q_unit').value,cognition:tr.querySelector('.q_cog').value,points:pts,source:tr.querySelector('.q_src').value.trim()||null,
+        deduction_items:items.length?items:null});});
     if(!rows.length){m.className='msg err';m.textContent='문항이 없습니다.';return;}
     if(bad){m.className='msg err';m.textContent='배점을 확인하세요.';return;}
+    if(dedOver){m.className='msg err';m.textContent='감점 합계가 배점을 초과한 문항이 있습니다.';return;}
     try{await db.saveQuestions(sess.id,rows);m.className='msg ok';m.textContent='저장되었습니다. 채점 그리드로 이동하세요.';}
     catch(e){m.className='msg err';m.textContent='실패: '+(e?.message||'오류');}
   });
@@ -161,8 +214,10 @@ async function renderScoreGrid(body,c){
     check();
   });
   // 태그 버튼
+  const qById={};questions.forEach(q=>qById[q.id]=q);
   grid.querySelectorAll('.tagbtn').forEach(btn=>btn.addEventListener('click',()=>{
-    const td=btn.closest('td.scell');openTagMenu(td);}));
+    const td=btn.closest('td.scell');const q=qById[td.dataset.q];
+    openTagMenu(td,q&&q.deduction_items);}));
   recompute();
   $('gridSave').addEventListener('click',async()=>{
     const m=$('gridMsg');m.className='msg';m.textContent='';
@@ -177,12 +232,23 @@ async function renderScoreGrid(body,c){
     catch(e){m.className='msg err';m.textContent='실패: '+(e?.message||'오류');}
   });
 }
-function openTagMenu(td){
+function openTagMenu(td,dedItems){
   const curTag=td.dataset.tag||'',curNote=td.dataset.note||'',curPhoto=td.dataset.photo||'';
+  const maxPts=Number(td.dataset.max)||0;
+  const items=Array.isArray(dedItems)?dedItems.filter(d=>d&&d.label&&Number(d.points)>0):[];
   let selTag=curTag,removePhoto=false;
   const panel=document.createElement('div');
   panel.style.cssText='position:fixed;z-index:100;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:12px;width:280px;max-height:80vh;overflow:auto';
-  panel.innerHTML=`
+  const dedHTML=items.length?`
+    <div style="font-size:12px;font-weight:700;margin-bottom:6px">감점 항목 <span class="muted" style="font-weight:400">체크하면 점수가 자동 계산됩니다</span></div>
+    <div class="tm_ded" style="margin-bottom:6px">
+      ${items.map((d,i)=>`<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;padding:3px 0;cursor:pointer">
+        <input type="checkbox" class="tm_dedchk" data-i="${i}" data-pts="${esc(d.points)}" data-tag="${esc(d.tag||'')}">
+        <span style="flex:1">${esc(d.label)}</span>
+        <span class="chip red" style="font-size:10.5px">-${esc(d.points)}</span></label>`).join('')}
+    </div>
+    <div class="tm_dedsum muted" style="font-size:11.5px;margin-bottom:10px"></div>`:'';
+  panel.innerHTML=dedHTML+`
     <div style="font-size:12px;font-weight:700;margin-bottom:6px">오답 원인</div>
     <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">
       ${['(없음)',...WRONG_REASONS].map(r=>{const v=(r==='(없음)'?'':r);return `<button type="button" class="btn line sm tm_tag" data-r="${esc(v)}" style="${v===selTag?'border-color:var(--purple);color:var(--purple)':''}">${esc(r)}</button>`;}).join('')}
@@ -200,8 +266,27 @@ function openTagMenu(td){
   const close=()=>{panel.remove();document.removeEventListener('mousedown',out,true);};
   const out=e=>{if(!panel.contains(e.target))close();};
   setTimeout(()=>document.addEventListener('mousedown',out,true),0);
-  panel.querySelectorAll('.tm_tag').forEach(b=>b.addEventListener('click',()=>{selTag=b.dataset.r;
-    panel.querySelectorAll('.tm_tag').forEach(x=>x.style.cssText='');b.style.cssText='border-color:var(--purple);color:var(--purple)';}));
+  const markTag=v=>{selTag=v;
+    panel.querySelectorAll('.tm_tag').forEach(x=>{x.style.cssText=(x.dataset.r===v&&v)?'border-color:var(--purple);color:var(--purple)':'';});};
+  panel.querySelectorAll('.tm_tag').forEach(b=>b.addEventListener('click',()=>markTag(b.dataset.r)));
+
+  /* 감점 체크 → 득점 = 배점 - 체크된 감점 합계(0 미만 방지).
+     가장 큰 감점 항목의 태그를 오답원인으로 자동 제안한다(수동 변경 가능). */
+  function recalcDeduction(){
+    const chks=[...panel.querySelectorAll('.tm_dedchk:checked')];
+    const sum=chks.reduce((s,c)=>s+(Number(c.dataset.pts)||0),0);
+    const earned=Math.max(0,maxPts-sum);
+    const inp=td.querySelector('input');
+    inp.value=String(earned);
+    inp.dispatchEvent(new Event('input',{bubbles:true}));   // 행 합계·정답률 갱신
+    const sumEl=panel.querySelector('.tm_dedsum');
+    if(sumEl)sumEl.textContent=chks.length?('감점 '+sum+'점 → 득점 '+earned+' / '+maxPts):'체크한 감점 없음 → 만점 처리';
+    if(chks.length){
+      const top=chks.slice().sort((a,b)=>(Number(b.dataset.pts)||0)-(Number(a.dataset.pts)||0))[0];
+      if(top&&top.dataset.tag)markTag(top.dataset.tag);
+    }
+  }
+  panel.querySelectorAll('.tm_dedchk').forEach(c=>c.addEventListener('change',recalcDeduction));
   panel.querySelector('.tm_rmphoto')?.addEventListener('click',()=>{removePhoto=true;panel.querySelector('.tm_photo').innerHTML='<span class="muted" style="font-size:12px">사진을 삭제합니다(저장 시 반영).</span>';});
   panel.querySelector('.tm_close').addEventListener('click',close);
   panel.querySelector('.tm_save').addEventListener('click',async()=>{

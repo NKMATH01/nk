@@ -1,6 +1,6 @@
 /* 진행 현황 리포트 */
-import { computeReadiness, heatFromRecords, hwAccuracyAvg, hwTimeAvg } from '../calc.js';
-import { COGNITIONS, UNITS } from '../config.js';
+import { cellRateSince, computeReadiness, heatFromRecords, hwAccuracyAvg, hwTimeAvg, judgePrescription } from '../calc.js';
+import { COGNITIONS, TODAY, UNITS } from '../config.js';
 import { db, loadContext, studentBundle } from '../db.js';
 import { svg } from '../icons.js';
 import { app } from '../state.js';
@@ -20,7 +20,17 @@ async function renderReport(c){
   const printBar=`<div class="selectbar"><button class="btn line sm no-print" id="printBtn">${svg('print','sm')}인쇄/PDF</button></div>`;
 
   // KPI (전체 누적)
-  const {readiness}=computeReadiness({weeklyPercents:b.weeklyPercents,questionRecords:b.questionRecords,essays:b.essayInputs,homeworks:b.homeworks});
+  const {readiness,coverage}=computeReadiness({weeklyPercents:b.weeklyPercents,weeklyScaled:b.weeklyScaled,questionRecords:b.questionRecords,essays:b.essayInputs,homeworks:b.homeworks});
+  // 최근 8주 처방 성과 요약
+  const rxAll=await db.listPrescriptions(sid);
+  const since=new Date(TODAY.getTime()-56*86400000);
+  const sinceStr=since.getFullYear()+'-'+String(since.getMonth()+1).padStart(2,'0')+'-'+String(since.getDate()).padStart(2,'0');
+  const rxRecent=rxAll.filter(p=>p.status!=='cancelled'&&String(p.created_at||'').slice(0,10)>=sinceStr);
+  const rxImproved=rxRecent.filter(p=>judgePrescription(p.baseline_rate,
+    cellRateSince(b.questionRecords,p.unit,p.cognition,String(p.created_at||'').slice(0,10))).key==='improved').length;
+  const rxLine=rxRecent.length
+    ? `최근 8주 처방 ${rxRecent.length}건 중 <b>${rxImproved}건 개선</b>${rxRecent.length>rxImproved?` · ${rxRecent.length-rxImproved}건은 정체·악화 또는 재측정 대기`:''}`
+    : '최근 8주에 배정된 처방이 없습니다.';
   const curPct=wp.length?wp[wp.length-1]:null;const prevPct=wp.length>1?wp[wp.length-2]:null;const delta=(curPct!=null&&prevPct!=null)?curPct-prevPct:null;
   const hw=b.homeworks;const hwAcc=hwAccuracyAvg(hw);const hwTime=hwTimeAvg(hw);
   const heat=heatFromRecords(b.questionRecords);let weakCells=0;UNITS.forEach(u=>COGNITIONS.forEach(cg=>{if(heat[u][cg].rate!=null&&heat[u][cg].rate<40)weakCells++;}));
@@ -46,7 +56,8 @@ async function renderReport(c){
         <div class="kpi"><div class="lbl">과제 누적 정답률</div><div class="val">${hwAcc==null?'-':r1(hwAcc)+'<small>%</small>'}</div></div>
         <div class="kpi"><div class="lbl">취약 셀 수</div><div class="val">${weakCells}<small> 개</small></div></div>
       </div>
-      <div class="muted" style="font-size:12px;margin:-8px 0 14px">과제 평균 풀이 시간: <b>${hwTime==null?'-':r1(hwTime)+'분/회'}</b></div>
+      <div class="muted" style="font-size:12px;margin:-8px 0 6px">과제 평균 풀이 시간: <b>${hwTime==null?'-':r1(hwTime)+'분/회'}</b> · 진도 커버리지: <b>${coverage==null?'-':Math.round(coverage)+'%'}</b></div>
+      <div class="muted" style="font-size:12px;margin:0 0 14px">처방 성과: ${rxLine}</div>
       <div class="grid2">
         <div><h3 style="font-size:13px">주간 점수 추이</h3><canvas id="repLine" height="150"></canvas></div>
         <div><h3 style="font-size:13px">단원별 정답률</h3>${UNITS.map(u=>{const a=unitAgg[u];const p=a.p>0?Math.round(a.e/a.p*100):null;

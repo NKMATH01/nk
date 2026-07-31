@@ -19,7 +19,7 @@ function buildDemoStore(){
   const U=(name,campus,region,eo,er,nr,mg,qmix,date,quota,notes)=>({
     id:uuid(),name,campus:campus||null,region,essay_only:eo,essay_ratio:er,naesin_ratio:nr,min_grade_rule:mg,
     math_scope:'수Ⅰ·수Ⅱ',question_mix:qmix,exam_date:date,quota:quota,confirmed:false,notes:notes||null,
-    last_competition:null,last_cut_pct:null,last_result_note:null});
+    last_competition:null,last_cut_pct:null,last_result_note:null,last_cut_basis:null});
   const universities=[
     U('국민대',null,'서울',true,'논술 100%','미반영','요강 확인 필요','국어 단답+수학 서술 12문항','2026-11-22',210,'EBS 수특·수완 기반'),
     U('상명대',null,'서울',false,'논술 70%+내신 30%','30%','요강 확인 필요','국어+수학 10문항','2026-11-29',160,null),
@@ -39,9 +39,12 @@ function buildDemoStore(){
     U('한국기술교육대',null,'충청',true,'논술 100%','미반영','요강 확인 필요','수학 서술 12문항','2026-11-21',85,null),
   ];
   const uByName=n=>universities.find(u=>u.name===n);
-  // 작년 입시결과 데모 시드(경쟁률·합격선%)
-  [['가천대',40,68,'2025 자연 기준(데모)'],['서경대',25,74,'2025 논술 100% 기준(데모)'],['국민대',30,71,'2025 기준(데모)']]
-    .forEach(([n,comp,cut,note])=>{const u=uByName(n);if(u){u.last_competition=comp;u.last_cut_pct=cut;u.last_result_note=note;}});
+  // 작년 입시결과 데모 시드(경쟁률·합격선%·합격선 산출기준)
+  // 국민대는 basis 를 비워 둬서 "합격선 정의 미확인 → 비교 생략" 경로를 보여준다.
+  [['가천대',40,68,'2025 자연 기준(데모)','150점 만점 환산 70%컷(데모)'],
+   ['서경대',25,74,'2025 논술 100% 기준(데모)','논술 100% 원점수 백분율(데모)'],
+   ['국민대',30,71,'2025 기준(데모)',null]]
+    .forEach(([n,comp,cut,note,basis])=>{const u=uByName(n);if(u){u.last_competition=comp;u.last_cut_pct=cut;u.last_result_note=note;u.last_cut_basis=basis;}});
   const student_targets=[];
   const addT=(si,names)=>names.forEach((n,i)=>student_targets.push({id:uuid(),student_id:students[si].id,university_id:uByName(n).id,priority:i+1}));
   addT(0,['국민대','가천대','서경대']);
@@ -69,6 +72,14 @@ function buildDemoStore(){
       const points=[5,8,10,12][Math.floor(rnd()*4)];
       totPts+=points;
       const qq={id:uuid(),session_id:sess.id,no:q+1,unit,cognition:cog,points,source:'수특 '+unit+' '+(q+1)};
+      // 감점 항목 샘플(앞 3문항만) — 채점 그리드 체크박스 데모용
+      if(q<3){
+        qq.deduction_items=[
+          {label:'조건 누락',points:Math.max(1,Math.round(points*0.2)),tag:'조건 해석'},
+          {label:'풀이 근거 미기재',points:Math.max(1,Math.round(points*0.3)),tag:'풀이 근거 누락'},
+          {label:'계산 오류',points:Math.max(1,Math.round(points*0.2)),tag:'계산 실수'},
+        ];
+      }
       questions.push(qq);qs.push(qq);
     }
     sess.total_score=totPts;
@@ -128,7 +139,19 @@ function buildDemoStore(){
       content:'논술 100% 대학 위주 지원 전략 논의(국민대·가천대·서경대). 내신 부담 낮은 라인업 확정.',follow_up:'모집요강 확정 후 최저 재확인',visible_to_student:false,created_at:'2026-06-30'});
   });
 
-  return {students,universities,student_targets,test_sessions,questions,scores,homework_records,essay_gradings,teacher_comments,counseling_notes,accounts:[]};
+  // 처방(취약 진단에서 배정한 보완 과제) — 개선/정체/대기 3가지 상태를 모두 보여준다
+  const prescriptions=[];
+  prescriptions.push({id:uuid(),student_id:students[0].id,unit:'삼각함수',cognition:'활용',
+    due_date:'2026-06-27',note:'활용형 조건 도식화 훈련 주 2회. 수특 삼각함수 활용 6~12번 반복.',
+    baseline_rate:18,status:'active',created_at:'2026-06-13'});
+  prescriptions.push({id:uuid(),student_id:students[0].id,unit:'수열',cognition:'계산',
+    due_date:'2026-06-13',note:'점화식 계산 정확도 훈련.',
+    baseline_rate:52,status:'done',created_at:'2026-05-30'});
+  prescriptions.push({id:uuid(),student_id:students[1].id,unit:'미분',cognition:'그래프',
+    due_date:'2026-07-25',note:'증감표 작성 후 개형 스케치 루틴화.',
+    baseline_rate:61,status:'active',created_at:'2026-07-11'});
+
+  return {students,universities,student_targets,test_sessions,questions,scores,homework_records,essay_gradings,teacher_comments,counseling_notes,prescriptions,accounts:[]};
 }
 
 export { buildDemoStore };

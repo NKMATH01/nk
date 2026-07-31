@@ -1,6 +1,7 @@
 /* 데이터 접근 계층(데모=메모리 / 실서버=Supabase)과 집계 헬퍼.
    401 응답 시 호출하는 doLogout 은 순환 import 를 피하려고 app 을 경유한다. */
 import { app } from './state.js';
+import { cohortSessionStats, sessionPercentRows, standardizeWeekly } from './calc.js';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 import { $, clamp, normPhone, todayStr, uuid } from './util.js';
 
@@ -141,6 +142,17 @@ const db={
     const r=await apiFetch('/api/accounts',{method:'POST',body:{action:'upsert',phone:normPhone(phone),password,role,student_id:sid||null}});return r.result;},
   async upsertReadinessSnapshot(rows){if(app.DEMO)return;
     const {error}=await app.sb.from('readiness_snapshots').upsert(rows,{onConflict:'student_id,snap_date'});if(error)throw error;},
+  // 회차 난이도 보정(코호트 z)에 쓸 전체 채점. 학생 계정은 RLS 때문에 본인 것만 돌아온다.
+  async listAllScores(){if(app.DEMO)return app.store.scores.slice();
+    return await sbq(app.sb.from('scores').select('question_id,student_id,earned'),'채점 조회',[]);},
+  async listPrescriptions(sid){if(app.DEMO)return app.store.prescriptions.filter(p=>!sid||p.student_id===sid).slice();
+    let q=app.sb.from('prescriptions').select('*').order('created_at',{ascending:false});
+    if(sid)q=q.eq('student_id',sid);
+    return await sbq(q,'처방 조회',[]);},
+  async insertPrescription(p){if(app.DEMO){app.store.prescriptions.push(Object.assign({id:uuid(),status:'active',created_at:todayStr()},p));return;}
+    const {error}=await app.sb.from('prescriptions').insert(p);if(error)throw error;},
+  async updatePrescriptionStatus(id,status){if(app.DEMO){const o=app.store.prescriptions.find(x=>x.id===id);if(o)o.status=status;return;}
+    const {error}=await app.sb.from('prescriptions').update({status}).eq('id',id);if(error)throw error;},
   /* 채점 사진: 버킷이 private 이라 열람은 서버가 발급한 10분짜리 서명 URL 로만 가능하다. */
   async getSignedPhotoUrl(path){if(app.DEMO)return null;
     const r=await apiFetch('/api/signed-url',{method:'POST',body:{path}});return r.signedUrl||null;},
@@ -161,9 +173,12 @@ function storagePathFromValue(v){
    ═══════════════════════════════════════════════════════════════════ */
 async function loadContext(){
   // 계산에 필요한 공통 데이터
-  const [students,universities,targets,sessions,questions]=await Promise.all([
-    db.listStudents(),db.listUniversities(),db.listTargets(),db.listSessions(),db.listAllQuestions()]);
-  return {students,universities,targets,sessions,questions};
+  const [students,universities,targets,sessions,questions,allScores]=await Promise.all([
+    db.listStudents(),db.listUniversities(),db.listTargets(),db.listSessions(),db.listAllQuestions(),
+    db.listAllScores()]);
+  // 회차별 코호트 통계(평균·표준편차). 회차 난이도 보정에 쓴다.
+  const cohort=cohortSessionStats(sessionPercentRows(allScores,questions,sessions));
+  return {students,universities,targets,sessions,questions,cohort};
 }
 async function studentBundle(sid,ctx){
   const qById={};ctx.questions.forEach(q=>qById[q.id]=q);
@@ -176,12 +191,15 @@ async function studentBundle(sid,ctx){
     perSession[s.id].pts+=Number(q.points)||0;});
   const sessArr=Object.values(perSession).sort((a,b)=>a.week-b.week);
   const weeklyPercents=sessArr.map(s=>{const denom=s.total||s.pts||0;return denom>0?clamp(s.earned/denom*100):0;});
-  // 문항 레코드(단원/사고/배점/득점)
+  // 회차 난이도 보정 점수(코호트 z → 50±10z). 비교군이 없으면 원점수를 그대로 쓴다.
+  const weeklyScaled=standardizeWeekly(
+    sessArr.map((s,i)=>({session_id:s.id,percent:weeklyPercents[i]})), ctx&&ctx.cohort);
+  // 문항 레코드(단원/사고/배점/득점) — date 는 처방 재측정 구간을 자르는 데 쓴다.
   const questionRecords=scores.map(sc=>{const q=qById[sc.question_id];if(!q)return null;
-    return {unit:q.unit,cognition:q.cognition,points:Number(q.points)||0,earned:Number(sc.earned)||0,week:sessById[q.session_id]?.week_no,session_id:q.session_id,wrong_reason:sc.wrong_reason,no:q.no,reason_note:sc.reason_note,photo_url:sc.photo_url};
+    return {unit:q.unit,cognition:q.cognition,points:Number(q.points)||0,earned:Number(sc.earned)||0,week:sessById[q.session_id]?.week_no,date:sessById[q.session_id]?.exam_date,session_id:q.session_id,wrong_reason:sc.wrong_reason,no:q.no,reason_note:sc.reason_note,photo_url:sc.photo_url};
   }).filter(Boolean);
   const essayInputs=essays.map(e=>({earned:(e.cond_earned||0)+(e.proc_earned||0)+(e.ans_earned||0),max:(e.cond_max||0)+(e.proc_max||0)+(e.ans_max||0)}));
-  return {scores,homeworks,essays,perSession:sessArr,weeklyPercents,questionRecords,essayInputs,rawEssays:essays};
+  return {scores,homeworks,essays,perSession:sessArr,weeklyPercents,weeklyScaled,questionRecords,essayInputs,rawEssays:essays};
 }
 
 export { apiErr, sbq, apiFetch, db, loadContext, studentBundle,
