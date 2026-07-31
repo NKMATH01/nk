@@ -57,7 +57,11 @@ async function handleUpsert(req, res, body){
       throw L.fail(409, "이 전화번호는 이미 다른 계정(" + existing.role + ")에서 사용 중입니다. 다른 번호를 입력하세요.");
     }
     const patch = { role: role, student_id: sid || null };
-    if(password) patch.password_hash = L.hashPassword(phone, password);
+    // 비밀번호를 새로 주면 항상 scrypt 로 저장한다(레거시 sha256 은 더 이상 쓰지 않는다).
+    if(password){
+      patch.password_hash = L.hashScrypt(password);
+      patch.hash_alg = L.HASH_ALG_SCRYPT;
+    }
     await L.sbRest("accounts?id=eq." + L.eqParam(existing.id), {
       method: "PATCH", body: patch, headers: { Prefer: "return=minimal" },
     });
@@ -67,7 +71,13 @@ async function handleUpsert(req, res, body){
   if(!password) throw L.fail(400, "새 계정을 만들려면 비밀번호가 필요합니다.");
   await L.sbRest("accounts", {
     method: "POST",
-    body: { phone: phone, password_hash: L.hashPassword(phone, password), role: role, student_id: sid || null },
+    body: {
+      phone: phone,
+      password_hash: L.hashScrypt(password),
+      hash_alg: L.HASH_ALG_SCRYPT,
+      role: role,
+      student_id: sid || null,
+    },
     headers: { Prefer: "return=minimal" },
   });
   return L.sendJson(res, 201, { result: "created" });
@@ -79,14 +89,14 @@ async function handleChangePassword(req, res, body){
   if(typeof np !== "string" || np.length < MIN_PW){
     throw L.fail(400, "비밀번호는 " + MIN_PW + "자 이상이어야 합니다.");
   }
-  // 해시 솔트가 전화번호이므로 토큰이 아닌 DB 의 현재 값을 기준으로 계산한다.
   const rows = await L.sbRest("accounts?id=eq." + L.eqParam(auth.sub) + "&select=id,phone&limit=1");
   const acc = Array.isArray(rows) && rows.length ? rows[0] : null;
   if(!acc) throw L.fail(401, "계정을 찾을 수 없습니다. 다시 로그인하세요.");
 
+  // token_version 은 올리지 않는다 — 본인이 바꾼 것이므로 지금 쓰는 세션은 유지한다.
   await L.sbRest("accounts?id=eq." + L.eqParam(acc.id), {
     method: "PATCH",
-    body: { password_hash: L.hashPassword(acc.phone, np) },
+    body: { password_hash: L.hashScrypt(np), hash_alg: L.HASH_ALG_SCRYPT },
     headers: { Prefer: "return=minimal" },
   });
   return L.sendJson(res, 200, { result: "updated" });

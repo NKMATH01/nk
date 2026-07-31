@@ -1,13 +1,52 @@
 /* 데이터 접근 계층(데모=메모리 / 실서버=Supabase)과 집계 헬퍼.
    401 응답 시 호출하는 doLogout 은 순환 import 를 피하려고 app 을 경유한다. */
 import { app } from './state.js';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 import { $, clamp, normPhone, todayStr, uuid } from './util.js';
 
 /* ═══════════════════════════════════════════════════════════════════
    데이터 접근 계층 (데모=메모리 / 실서버=Supabase)
    ═══════════════════════════════════════════════════════════════════ */
+
+/* 세션 토큰을 Authorization 헤더로 달아 Supabase 클라이언트를 만든다.
+   PostgREST 가 이 토큰을 검증하고 클레임으로 RLS 를 판별한다.
+   토큰이 없으면 anon 클라이언트가 되는데, RLS 적용 후에는 아무것도 읽지 못한다. */
+function makeClient(token){
+  const opts={auth:{persistSession:false,autoRefreshToken:false}};
+  if(token)opts.global={headers:{Authorization:'Bearer '+token}};
+  return supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,opts);
+}
+/* 현재 세션 토큰으로 app.sb 를 다시 만든다. 로그인·토큰 갱신 직후 반드시 호출한다. */
+function applySession(){
+  app.sb=makeClient(app.session&&app.session.token);
+  return app.sb;
+}
+
 function apiErr(prefix,e){console.error(prefix,e);const g=$('globalErr');if(g){g.style.display='block';g.textContent=prefix+': '+(e?.message||'네트워크 오류. 인터넷 연결을 확인하세요.');}return null;}
-async function sbq(promise,prefix,fallback){try{const {data,error}=await promise;if(error)throw error;return data||fallback;}catch(e){apiErr(prefix,e);return fallback;}}
+
+/* 토큰이 없거나 곧 만료되면 true. RLS 적용 후에는 이 상태에서 조회가
+   에러 없이 "빈 결과"로 돌아오기 때문에, 빈 화면의 원인을 구분하는 데 쓴다. */
+function sessionSuspect(){
+  if(app.DEMO)return false;
+  const s=app.session;
+  if(!s||!s.token)return true;
+  return !(s.exp&&s.exp*1000>Date.now()+30000);
+}
+function warnSessionExpired(prefix){
+  console.warn(prefix+': 결과가 비어 있고 세션이 만료된 것으로 보입니다.');
+  const g=$('globalErr');
+  if(g){g.style.display='block';g.textContent='세션이 만료되었을 수 있습니다. 다시 로그인하세요.';}
+}
+/* 조회 결과가 비었는데 세션이 의심스러우면 경고를 띄운다.
+   RLS 는 권한이 없을 때 에러 대신 0행을 주므로 이 분기가 없으면 원인을 알 수 없다. */
+async function sbq(promise,prefix,fallback){
+  try{
+    const {data,error}=await promise;if(error)throw error;
+    const empty=!data||(Array.isArray(data)&&data.length===0);
+    if(empty&&sessionSuspect())warnSessionExpired(prefix);
+    return data||fallback;
+  }catch(e){apiErr(prefix,e);return fallback;}
+}
 
 /* 서버 함수(/api/*) 호출. 계정·비밀번호는 anon 키로 직접 접근하지 않고 여기를 거친다.
    세션 토큰이 있으면 Authorization 헤더로 붙인다. 실패 시 서버 메시지를 그대로 던진다. */
@@ -102,7 +141,20 @@ const db={
     const r=await apiFetch('/api/accounts',{method:'POST',body:{action:'upsert',phone:normPhone(phone),password,role,student_id:sid||null}});return r.result;},
   async upsertReadinessSnapshot(rows){if(app.DEMO)return;
     const {error}=await app.sb.from('readiness_snapshots').upsert(rows,{onConflict:'student_id,snap_date'});if(error)throw error;},
+  /* 채점 사진: 버킷이 private 이라 열람은 서버가 발급한 10분짜리 서명 URL 로만 가능하다. */
+  async getSignedPhotoUrl(path){if(app.DEMO)return null;
+    const r=await apiFetch('/api/signed-url',{method:'POST',body:{path}});return r.signedUrl||null;},
 };
+
+/* scores.photo_url 에는 이제 버킷 내 경로만 저장한다.
+   Phase 2 이전에 저장된 값은 public 전체 URL이라 경로를 뽑아내는 폴백이 필요하다. */
+function storagePathFromValue(v){
+  const s=String(v||'').trim();
+  if(!s)return '';
+  if(!/^https?:\/\//i.test(s))return s.replace(/^\/+/,'');
+  const m=/\/grading-photos\/(.+)$/.exec(s.split('?')[0]);
+  return m?decodeURIComponent(m[1]):'';
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    집계 헬퍼 — 학생별 번들, 히트맵, 실점
@@ -132,4 +184,5 @@ async function studentBundle(sid,ctx){
   return {scores,homeworks,essays,perSession:sessArr,weeklyPercents,questionRecords,essayInputs,rawEssays:essays};
 }
 
-export { apiErr, sbq, apiFetch, db, loadContext, studentBundle };
+export { apiErr, sbq, apiFetch, db, loadContext, studentBundle,
+         makeClient, applySession, sessionSuspect, storagePathFromValue };

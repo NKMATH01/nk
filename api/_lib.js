@@ -6,7 +6,9 @@
 "use strict";
 const crypto = require("node:crypto");
 
-const SESSION_DAYS = 30;
+const SESSION_DAYS = 30;                       // (구) Phase 1 세션 수명 — 참고용
+const TOKEN_DAYS = 7;                          // 토큰 수명. 탈취 시 노출 창을 줄이려고 단축했다.
+const TOKEN_TTL_SEC = TOKEN_DAYS * 24 * 60 * 60;
 
 /* ─── 환경변수 ───
    미설정 시 명확한 메시지와 함께 던진다. 호출부에서 500으로 변환한다. */
@@ -59,10 +61,12 @@ async function readJsonBody(req){
 }
 
 /* ─── 문자열 유틸 ─── */
-// index.html 의 normPhone 과 동일한 규칙(숫자만 남김)을 유지해야 한다.
+// js/util.js 의 normPhone 과 동일한 규칙(숫자만 남김)을 유지해야 한다.
 function normPhone(s){ return String(s == null ? "" : s).replace(/[^0-9]/g, ""); }
 
-// index.html 의 hashPassword 와 동일: SHA-256(정규화전화번호 + 비밀번호)
+// [레거시] Phase 1 까지 쓰던 방식: SHA-256(정규화전화번호 + 비밀번호).
+// 솔트가 전화번호라 사실상 없는 것과 같고 계산이 너무 빨라 무차별 대입에 약하다.
+// 새로 저장하지 않으며, 로그인 성공 시 scrypt 로 재해시(lazy rehash)한다.
 function hashPassword(phone, password){
   return crypto.createHash("sha256").update(normPhone(phone) + String(password), "utf8").digest("hex");
 }
@@ -73,6 +77,56 @@ function safeEqualHex(a, b){
   const bb = Buffer.from(String(b || ""), "utf8");
   if(ba.length !== bb.length) return false;
   return crypto.timingSafeEqual(ba, bb);
+}
+
+/* ─── scrypt 비밀번호 해시 ───
+   내장 node:crypto 만 사용한다(의존성 0 원칙 — bcrypt/argon2 패키지 미도입).
+   저장 포맷: scrypt$N$r$p$saltBase64$hashBase64  */
+const SCRYPT_N = 16384, SCRYPT_R = 8, SCRYPT_P = 1, SCRYPT_KEYLEN = 32;
+const SCRYPT_MAXMEM = 96 * 1024 * 1024;   // 128*N*r = 16MB. 여유 있게 잡는다.
+const HASH_ALG_LEGACY = "sha256";
+const HASH_ALG_SCRYPT = "scrypt";
+
+function hashScrypt(password){
+  const salt = crypto.randomBytes(16);
+  const dk = crypto.scryptSync(String(password), salt, SCRYPT_KEYLEN,
+    { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P, maxmem: SCRYPT_MAXMEM });
+  return [HASH_ALG_SCRYPT, SCRYPT_N, SCRYPT_R, SCRYPT_P,
+    salt.toString("base64"), dk.toString("base64")].join("$");
+}
+
+function verifyScrypt(stored, password){
+  const parts = String(stored || "").split("$");
+  if(parts.length !== 6 || parts[0] !== HASH_ALG_SCRYPT) return false;
+  const N = Number(parts[1]), r = Number(parts[2]), p = Number(parts[3]);
+  if(!Number.isFinite(N) || !Number.isFinite(r) || !Number.isFinite(p) || N < 2 || r < 1 || p < 1) return false;
+  let salt, expected;
+  try{
+    salt = Buffer.from(parts[4], "base64");
+    expected = Buffer.from(parts[5], "base64");
+  }catch(e){ return false; }
+  if(!salt.length || !expected.length) return false;
+  let dk;
+  try{
+    dk = crypto.scryptSync(String(password), salt, expected.length,
+      { N: N, r: r, p: p, maxmem: SCRYPT_MAXMEM });
+  }catch(e){ return false; }
+  if(dk.length !== expected.length) return false;
+  return crypto.timingSafeEqual(dk, expected);
+}
+
+/* 계정 존재 여부가 응답 시간으로 새지 않도록, 계정이 없을 때도 같은 비용의
+   scrypt 연산을 돌리기 위한 더미 해시. 모듈 로드 시 1회만 만든다. */
+const DUMMY_SCRYPT = hashScrypt(crypto.randomBytes(24).toString("hex"));
+
+/* 저장된 해시가 어떤 방식이든 검증한다. 반환값의 needsRehash 가 true 면
+   호출부가 scrypt 로 재해시해 저장해야 한다. */
+function verifyPassword(stored, hashAlg, phone, password){
+  if(hashAlg === HASH_ALG_SCRYPT || String(stored || "").startsWith(HASH_ALG_SCRYPT + "$")){
+    return { ok: verifyScrypt(stored, password), needsRehash: false };
+  }
+  const ok = safeEqualHex(hashPassword(phone, password), stored);
+  return { ok: ok, needsRehash: ok };
 }
 
 /* ─── JWT (HS256, 직접 구현) ─── */
@@ -113,19 +167,22 @@ function verifyJwt(token, secret){
   return payload;
 }
 
-/* Authorization: Bearer <token> 검증. 실패 시 401 을 던진다. */
+/* Authorization: Bearer <token> 검증. 실패 시 401 을 던진다.
+   서명 키는 Supabase 레거시 JWT 시크릿이다 — 같은 토큰을 PostgREST 도 검증하므로
+   서버 함수와 DB(RLS)가 동일한 키·동일한 클레임을 본다. */
 function requireAuth(req){
   const h = req.headers && (req.headers.authorization || req.headers.Authorization);
   const m = /^Bearer\s+(.+)$/i.exec(String(h || ""));
   if(!m) throw fail(401, "로그인이 필요합니다.");
-  const payload = verifyJwt(m[1].trim(), env("SESSION_JWT_SECRET"));
+  const payload = verifyJwt(m[1].trim(), env("SUPABASE_JWT_SECRET"));
   if(!payload) throw fail(401, "세션이 만료되었습니다. 다시 로그인하세요.");
   return payload;
 }
 
+// 앱 역할은 app_role 클레임에 있다(role 은 PostgREST 용 'authenticated' 고정).
 function requireAdmin(req){
   const p = requireAuth(req);
-  if(p.role !== "admin") throw fail(403, "관리자만 사용할 수 있습니다.");
+  if(p.app_role !== "admin") throw fail(403, "관리자만 사용할 수 있습니다.");
   return p;
 }
 
@@ -151,13 +208,52 @@ async function sbRest(path, options){
   try{ return JSON.parse(text); }catch(e){ return null; }
 }
 
+/* Storage API(/storage/v1/...) 호출. service_role 로 서명 URL 을 만들 때 쓴다. */
+async function storageRest(path, options){
+  const base = env("SUPABASE_URL").replace(/\/+$/, "");
+  const key = env("SUPABASE_SERVICE_ROLE_KEY");
+  const opt = options || {};
+  const res = await fetch(base + "/storage/v1/" + path.replace(/^\/+/, ""), {
+    method: opt.method || "GET",
+    headers: Object.assign({
+      apikey: key,
+      Authorization: "Bearer " + key,
+      "Content-Type": "application/json",
+    }, opt.headers || {}),
+    body: opt.body ? JSON.stringify(opt.body) : undefined,
+  });
+  const text = await res.text();
+  if(!res.ok){
+    console.error("[api] storage", res.status, text);
+    if(res.status === 404) throw fail(404, "파일을 찾을 수 없습니다.");
+    throw fail(502, "파일 서명 요청에 실패했습니다.");
+  }
+  try{ return JSON.parse(text); }catch(e){ return null; }
+}
+
 // PostgREST 쿼리 문자열용 값 이스케이프(전화번호는 숫자만이라 실질 위험은 없으나 방어적으로).
 function eqParam(v){ return encodeURIComponent(String(v)); }
 
+/* 토큰이 담고 있어야 하는 클레임을 한곳에서 만든다.
+   role:'authenticated' 가 없으면 PostgREST 가 anon 으로 처리해 RLS 가 전부 막는다. */
+function buildClaims(acc){
+  return {
+    iss: "yaknon",
+    sub: acc.id,
+    role: "authenticated",          // PostgREST DB 역할 — 반드시 authenticated
+    aud: "authenticated",
+    app_role: acc.role,             // 앱 역할(admin/student/parent)
+    student_id: acc.student_id || null,
+    tv: acc.token_version == null ? 1 : Number(acc.token_version),
+  };
+}
+
 module.exports = {
-  SESSION_DAYS,
+  SESSION_DAYS, TOKEN_DAYS, TOKEN_TTL_SEC,
+  HASH_ALG_LEGACY, HASH_ALG_SCRYPT, DUMMY_SCRYPT,
   env, sendJson, sendError, fail, readJsonBody,
   normPhone, hashPassword, safeEqualHex,
-  signJwt, verifyJwt, requireAuth, requireAdmin,
-  sbRest, eqParam,
+  hashScrypt, verifyScrypt, verifyPassword,
+  signJwt, verifyJwt, requireAuth, requireAdmin, buildClaims,
+  sbRest, storageRest, eqParam,
 };

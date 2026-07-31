@@ -1,7 +1,7 @@
 /* 진입점 — 메뉴 정의, enterApp, navigate 라우터, 부트스트랩 */
-import { doLogin, doLogout, loadSession } from './auth.js';
-import { SUPABASE_ANON_KEY, SUPABASE_URL, cdnLoaded, isConfigured } from './config.js';
-import { db } from './db.js';
+import { doLogin, doLogout, loadSession, maybeRefreshSession } from './auth.js';
+import { cdnLoaded, isConfigured } from './config.js';
+import { applySession, db } from './db.js';
 import { buildDemoStore } from './demo.js';
 import { svg } from './icons.js';
 import { app } from './state.js';
@@ -112,7 +112,15 @@ $('sideBackdrop').addEventListener('click',()=>setSide(false));
   if(params.get('demo')==='1'){app.DEMO=true;app.store=buildDemoStore();await enterApp('admin',null);return;}
   $('loginView').style.display='flex';
   if(!isConfigured()){$('cfgBanner').style.display='block';$('loginBtn').disabled=true;return;}
-  app.sb=supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
   const s=loadSession();
-  if(s){app.session=s;try{await enterApp(s.role,s.student_id);}catch(e){console.error(e);doLogout();}}
+  app.session=s;
+  // 세션 토큰을 실은 클라이언트를 만든다. 토큰 클레임으로 RLS 가 판별되므로
+  // 이 호출 전에는 어떤 조회도 하면 안 된다.
+  applySession();
+  if(s){
+    try{
+      await maybeRefreshSession();   // 만료가 가까우면 조용히 연장(실패해도 진행)
+      await enterApp(app.session.role,app.session.student_id);
+    }catch(e){console.error(e);doLogout();}
+  }
 })();

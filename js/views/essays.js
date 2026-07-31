@@ -1,9 +1,9 @@
 /* 첨삭 관리 */
 import { RUBRIC } from '../config.js';
-import { db, loadContext, studentBundle } from '../db.js';
+import { db, loadContext, storagePathFromValue, studentBundle } from '../db.js';
 import { svg } from '../icons.js';
 import { app } from '../state.js';
-import { bindStudentSelector, studentSelector } from '../ui.js';
+import { bindStudentSelector, hydrateSignedPhotos, studentSelector } from '../ui.js';
 import { $, esc, fmtDate, todayStr } from '../util.js';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -52,12 +52,13 @@ async function renderEssays(c){
         ${rows.map(r=>{const ok=r.earned>=r.points;return `<div class="timeline-item" style="padding:10px;margin-bottom:8px">
           <div style="font-size:13px"><b>${esc(String(r.no||'-'))}번</b> · ${esc(r.unit)}·${esc(r.cognition)} ${ok?`<span class="chip green">${r.earned}/${r.points}점</span>`:`<span class="muted">(${r.earned}/${r.points}점)</span> ${r.wrong_reason?`<span class="chip amber">${esc(r.wrong_reason)}</span>`:''}`}</div>
           ${r.reason_note?`<div class="muted" style="font-size:12.5px;margin-top:6px;padding:8px;background:var(--bg);border-radius:8px">${esc(r.reason_note)}</div>`:''}
-          ${r.photo_url?`<div style="margin-top:6px"><a href="${esc(r.photo_url)}" target="_blank"><img src="${esc(r.photo_url)}" style="max-height:100px;border-radius:6px"></a></div>`:''}
+          ${r.photo_url?`<div style="margin-top:6px" data-photo-path="${esc(storagePathFromValue(r.photo_url))}" data-photo-height="100"><span class="muted" style="font-size:11px">사진 불러오는 중...</span></div>`:''}
         </div>`;}).join('')}</details>`;}).join(''):'<p class="muted">채점된 주간테스트가 없습니다.</p>';
     wrongCard=`<div class="card"><h3>${svg('activity')}주간테스트 오답 노트</h3>${inner}</div>`;
   }
 
   c.innerHTML=await studentSelector()+form+`<div class="card"><h3>${svg('clock')}첨삭 이력 (최신순)</h3>${timeline}</div>`+wrongCard;
+  hydrateSignedPhotos(c);   // private 버킷이라 서명 URL 을 받아 채운다
   bindStudentSelector(()=>renderEssays(c));
   if(!readonly){
     $('es_add').addEventListener('click',async()=>{

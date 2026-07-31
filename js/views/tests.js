@@ -1,8 +1,9 @@
 /* 주간테스트 — 회차 / 문항 정의 / 채점 그리드 / 감점 태그 */
-import { COGNITIONS, UNITS } from '../config.js';
-import { db } from '../db.js';
+import { COGNITIONS, UNITS, WRONG_REASONS } from '../config.js';
+import { db, storagePathFromValue } from '../db.js';
 import { svg } from '../icons.js';
 import { app } from '../state.js';
+import { hydrateSignedPhotos } from '../ui.js';
 import { $, esc, fmtDate, todayStr } from '../util.js';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -189,12 +190,13 @@ function openTagMenu(td){
     <div style="font-size:12px;font-weight:700;margin-bottom:4px">강사 메모</div>
     <textarea class="tm_note" rows="2" style="width:100%;padding:8px;border:1.5px solid var(--line);border-radius:8px;margin-bottom:10px" placeholder="감점 사유·피드백">${esc(curNote)}</textarea>
     <div style="font-size:12px;font-weight:700;margin-bottom:4px">사진 첨부</div>
-    <div class="tm_photo" style="margin-bottom:8px">${curPhoto?`<div><a href="${esc(curPhoto)}" target="_blank"><img src="${esc(curPhoto)}" style="height:60px;border-radius:6px"></a> <button type="button" class="btn danger sm tm_rmphoto">사진 삭제</button></div>`:''}</div>
+    <div class="tm_photo" style="margin-bottom:8px">${curPhoto?`<div><span data-photo-path="${esc(storagePathFromValue(curPhoto))}" class="muted" style="font-size:11px">사진 불러오는 중...</span> <button type="button" class="btn danger sm tm_rmphoto">사진 삭제</button></div>`:''}</div>
     <input type="file" class="tm_file" accept="image/*" style="font-size:12px;margin-bottom:10px">
     <div style="display:flex;gap:6px;justify-content:flex-end"><button type="button" class="btn line sm tm_close">닫기</button><button type="button" class="btn sm tm_save">저장</button></div>
     <div class="tm_msg msg" style="margin-top:6px"></div>`;
   const rect=td.getBoundingClientRect();panel.style.left=Math.min(rect.left,window.innerWidth-300)+'px';panel.style.top=Math.min(rect.bottom+4,window.innerHeight-220)+'px';
   document.body.appendChild(panel);
+  hydrateSignedPhotos(panel);   // private 버킷이라 서명 URL 을 받아 채운다
   const close=()=>{panel.remove();document.removeEventListener('mousedown',out,true);};
   const out=e=>{if(!panel.contains(e.target))close();};
   setTimeout(()=>document.addEventListener('mousedown',out,true),0);
@@ -215,9 +217,10 @@ function openTagMenu(td){
         if(file.size>5*1024*1024){m.className='tm_msg msg err';m.textContent='사진은 5MB 이하만 첨부할 수 있습니다.';return;}
         m.textContent='업로드 중...';
         try{const ext=(file.name.split('.').pop()||'jpg').toLowerCase();
-          const path='q'+td.dataset.q+'_s'+td.dataset.s+'_'+Date.now()+'.'+ext;
+          // 학생 id 를 최상위 폴더로 둔다 — 서명 URL 발급 시 소유자 확인 근거가 된다.
+          const path=td.dataset.s+'/'+td.dataset.q+'_'+Date.now()+'.'+ext;
           const up=await app.sb.storage.from('grading-photos').upload(path,file);if(up.error)throw up.error;
-          photoUrl=app.sb.storage.from('grading-photos').getPublicUrl(path).data.publicUrl;
+          photoUrl=path;   // 전체 URL 이 아니라 경로만 저장한다(버킷이 private)
         }catch(e){m.className='tm_msg msg err';m.textContent='사진 업로드 실패: '+(e?.message||'오류');return;}
       }
     }

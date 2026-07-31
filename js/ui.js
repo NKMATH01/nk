@@ -6,6 +6,9 @@
    ※ 기존 화면 코드는 아직 이 규칙을 따르지 않는다(Phase 2는 순수 분할이라 동작을 동결).
      새로 작성하거나 손대는 화면부터 patchRegion 을 적용한다.
    ═══════════════════════════════════════════════════════════════════ */
+import { db } from './db.js';
+import { app } from './state.js';
+import { $, esc } from './util.js';
 
 /* 특정 요소의 내용만 교체한다. 대상이 없으면 아무 일도 하지 않는다(렌더 경합 방지). */
 export function patchRegion(elId, html){
@@ -15,9 +18,29 @@ export function patchRegion(elId, html){
   return true;
 }
 
-import { db } from './db.js';
-import { app } from './state.js';
-import { $, esc } from './util.js';
+/* 채점 사진 서명 URL 채우기.
+   grading-photos 버킷이 private 이라 <img src>에 바로 넣을 URL 이 없다.
+   템플릿은 data-photo-path 만 심어 두고, 렌더 후 이 함수가 서명 URL 을 받아 채운다.
+   서명 URL 은 10분짜리라 화면을 다시 그릴 때마다 새로 받는다. */
+export async function hydrateSignedPhotos(root){
+  const scope = root || document;
+  const nodes = [...scope.querySelectorAll('[data-photo-path]')];
+  await Promise.all(nodes.map(async el => {
+    const path = el.dataset.photoPath;
+    if(!path) return;
+    el.dataset.photoPath = '';           // 중복 요청 방지
+    try{
+      const url = await db.getSignedPhotoUrl(path);
+      if(!url){ el.innerHTML = '<span class="muted" style="font-size:11px">사진을 불러올 수 없습니다.</span>'; return; }
+      const h = el.dataset.photoHeight || '60';
+      el.innerHTML = '<a href="' + esc(url) + '" target="_blank" rel="noopener">'
+        + '<img src="' + esc(url) + '" style="max-height:' + esc(h) + 'px;border-radius:6px"></a>';
+    }catch(e){
+      console.warn('사진 서명 URL 실패', e);
+      el.innerHTML = '<span class="muted" style="font-size:11px">사진 열람 권한이 없거나 만료되었습니다.</span>';
+    }
+  }));
+}
 
 function destroyCharts(){app.state.charts.forEach(c=>{try{c.destroy();}catch(e){}});app.state.charts=[];}
 
