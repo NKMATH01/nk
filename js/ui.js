@@ -30,7 +30,8 @@ export async function hydrateSignedPhotos(root){
     if(!path) return;
     el.dataset.photoPath = '';           // 중복 요청 방지
     try{
-      const url = await db.getSignedPhotoUrl(path);
+      // data-photo-bucket 으로 버킷을 지정할 수 있다(기본 grading-photos, 문제 이미지는 problem-images)
+      const url = await db.getSignedPhotoUrl(path, el.dataset.photoBucket);
       if(!url){ el.innerHTML = '<span class="muted" style="font-size:11px">사진을 불러올 수 없습니다.</span>'; return; }
       const h = el.dataset.photoHeight || '60';
       el.innerHTML = '<a href="' + esc(url) + '" target="_blank" rel="noopener">'

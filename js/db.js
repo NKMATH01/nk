@@ -153,9 +153,18 @@ const db={
     const {error}=await app.sb.from('prescriptions').insert(p);if(error)throw error;},
   async updatePrescriptionStatus(id,status){if(app.DEMO){const o=app.store.prescriptions.find(x=>x.id===id);if(o)o.status=status;return;}
     const {error}=await app.sb.from('prescriptions').update({status}).eq('id',id);if(error)throw error;},
-  /* 채점 사진: 버킷이 private 이라 열람은 서버가 발급한 10분짜리 서명 URL 로만 가능하다. */
-  async getSignedPhotoUrl(path){if(app.DEMO)return null;
-    const r=await apiFetch('/api/signed-url',{method:'POST',body:{path}});return r.signedUrl||null;},
+  /* private 버킷 파일 열람: 서버가 역할·소유를 확인하고 10분짜리 서명 URL 을 준다. */
+  async getSignedPhotoUrl(path,bucket){if(app.DEMO)return null;
+    const r=await apiFetch('/api/signed-url',{method:'POST',body:{path,bucket:bucket||'grading-photos'}});return r.signedUrl||null;},
+
+  /* ── 문제은행 (관리자 전용) ──
+     RLS 로도 막혀 있지만, 화면 라우트 자체를 학생 메뉴에 넣지 않아 이중으로 차단한다. */
+  async listProblems(){if(app.DEMO)return app.store.problems.slice();
+    return await sbq(app.sb.from('problems').select('*').order('created_at',{ascending:false}),'문제은행 조회',[]);},
+  async insertProblem(p){if(app.DEMO){const o=Object.assign({id:uuid(),created_at:todayStr(),updated_at:todayStr()},p);app.store.problems.unshift(o);return o;}
+    const {data,error}=await app.sb.from('problems').insert(p).select().single();if(error)throw error;return data;},
+  async updateProblem(id,patch){if(app.DEMO){const o=app.store.problems.find(x=>x.id===id);if(o)Object.assign(o,patch);return o;}
+    const {error}=await app.sb.from('problems').update(Object.assign({updated_at:new Date().toISOString()},patch)).eq('id',id);if(error)throw error;},
 };
 
 /* scores.photo_url 에는 이제 버킷 내 경로만 저장한다.

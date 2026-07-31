@@ -15,6 +15,7 @@ import { renderEssays } from './views/essays.js';
 import { initHashgen } from './views/hashgen.js';
 import { renderHomeworkCheck } from './views/homework.js';
 import { renderParent } from './views/parent.js';
+import { renderProblems } from './views/problems.js';
 import { renderReport } from './views/report.js';
 import { renderSettings } from './views/settings.js';
 import { renderStudentTargets } from './views/studentTargets.js';
@@ -31,6 +32,7 @@ const ADMIN_MENU=[
   {grp:'관리'},
   {id:'students',label:'학생 관리',icon:'users'},
   {id:'counsel',label:'상담 기록',icon:'chat'},
+  {id:'problems',label:'문제은행',icon:'file'},
   {id:'tests',label:'주간테스트',icon:'grid'},
   {id:'hwcheck',label:'과제 점검',icon:'clipboardCheck'},
   {id:'diagnosis',label:'취약 진단',icon:'activity'},
@@ -81,7 +83,7 @@ function navigate(tab){
   $('navMenu').querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
   const meta=menu.find(m=>m.id===tab);$('pageTitle').textContent=meta?meta.label:'';$('pageCrumb').textContent='';
   const c=$('tabContent');c.innerHTML='<p class="muted">불러오는 중...</p>';
-  const R={dashboard:renderDashboard,students:renderStudents,counsel:renderCounseling,tests:renderTests,hwcheck:renderHomeworkCheck,diagnosis:renderDiagnosis,
+  const R={dashboard:renderDashboard,students:renderStudents,counsel:renderCounseling,problems:renderProblems,tests:renderTests,hwcheck:renderHomeworkCheck,diagnosis:renderDiagnosis,
     essays:renderEssays,admission:renderAdmission,report:renderReport,universities:renderUniversities,settings:renderSettings,
     s_report:renderReport,s_counsel:renderStudentCounsel,s_diagnosis:renderDiagnosis,s_essays:renderEssays,s_targets:renderStudentTargets};
   (R[tab]||(x=>x.innerHTML='<p class="muted">준비 중</p>'))(c);

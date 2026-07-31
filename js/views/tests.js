@@ -70,7 +70,8 @@ async function renderQuestionDef(body,c){
     <div class="card"><h3>${svg('grid')}${sess.week_no}주차 문항 정의 <span class="sub">${esc(fmtDate(sess.exam_date))} · 총점 ${sess.total_score}</span></h3>
       <div style="overflow-x:auto"><table id="qdef"><thead><tr><th style="width:52px">번호</th><th>단원</th><th>사고과정</th><th style="width:90px">배점</th><th>출처(선택)</th><th style="width:60px"></th></tr></thead><tbody></tbody></table></div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
-        <button class="btn line sm" id="qadd">${svg('plus','sm')}문항 추가</button>
+        <div><button class="btn line sm" id="qadd">${svg('plus','sm')}문항 추가</button>
+          <button class="btn line sm" id="qbank">${svg('file','sm')}은행에서 가져오기</button></div>
         <div><span id="ptsum" class="chip gray"></span> <button class="btn" id="qsave">${svg('check','sm')}문항 저장</button></div>
       </div>
       <div id="qmsg" class="msg"></div>
@@ -95,6 +96,7 @@ async function renderQuestionDef(body,c){
         <div class="ded-msg muted" style="font-size:11.5px;margin-top:4px"></div>
       </details></td>`;
     tr._ded=dtr;
+    tr.dataset.problemId=(q&&q.problem_id)?q.problem_id:'';   // 은행 연결(누적 실적 집계용)
     tr.querySelector('.q_del').addEventListener('click',()=>{dtr.remove();tr.remove();renumber();});
     tr.querySelector('.q_pts').addEventListener('input',()=>{updateSum();checkDed(tr);});
     tb.appendChild(tr);tb.appendChild(dtr);
@@ -140,6 +142,16 @@ async function renderQuestionDef(body,c){
   (questions.length?questions:[{unit:UNITS[0],cognition:COGNITIONS[0],points:0,source:null}]).forEach(addRow);
   renumber();
   $('qadd').addEventListener('click',()=>{addRow({unit:UNITS[0],cognition:COGNITIONS[0],points:0,source:null});renumber();});
+  $('qbank').addEventListener('click',()=>openBankPicker(picked=>{
+    // 은행 문항 → 회차 문항. rubric 중 태그가 붙은 항목을 감점 항목 초기값으로 옮긴다.
+    picked.forEach(p=>addRow({
+      unit:p.unit||UNITS[0],cognition:p.cognition||COGNITIONS[0],points:p.points!=null?p.points:0,
+      source:p.source_citation||null,problem_id:p.id,
+      deduction_items:(Array.isArray(p.rubric)?p.rubric:[]).filter(r=>r&&r.tag&&Number(r.points)>0)
+        .map(r=>({label:r.criterion,points:Number(r.points),tag:r.tag})),
+    }));
+    renumber();
+  }));
   $('qsave').addEventListener('click',async()=>{
     const m=$('qmsg');m.className='msg';m.textContent='';
     const rows=[];let bad=false,dedOver=false;
@@ -151,6 +163,7 @@ async function renderQuestionDef(body,c){
         tag:r.querySelector('.d_tag').value||null,
       })).filter(d=>d.label&&d.points>0);
       rows.push({no:i+1,unit:tr.querySelector('.q_unit').value,cognition:tr.querySelector('.q_cog').value,points:pts,source:tr.querySelector('.q_src').value.trim()||null,
+        problem_id:tr.dataset.problemId||null,
         deduction_items:items.length?items:null});});
     if(!rows.length){m.className='msg err';m.textContent='문항이 없습니다.';return;}
     if(bad){m.className='msg err';m.textContent='배점을 확인하세요.';return;}
@@ -232,6 +245,66 @@ async function renderScoreGrid(body,c){
     catch(e){m.className='msg err';m.textContent='실패: '+(e?.message||'오류');}
   });
 }
+/* 문제은행에서 published 문항을 골라 회차에 넣는 모달.
+   문제은행 화면과 같은 필터를 쓰되, 여기서는 공개 상태 문항만 보여준다. */
+async function openBankPicker(onPick){
+  const back=document.createElement('div');
+  back.style.cssText='position:fixed;inset:0;background:rgba(20,22,28,.45);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px';
+  const panel=document.createElement('div');
+  panel.style.cssText='background:#fff;border-radius:14px;box-shadow:var(--shadow);padding:16px;width:min(880px,96vw);max-height:86vh;overflow:auto';
+  panel.innerHTML='<p class="muted">문제은행 불러오는 중...</p>';
+  back.appendChild(panel);document.body.appendChild(back);
+  const close=()=>back.remove();
+  back.addEventListener('click',e=>{if(e.target===back)close();});
+
+  let problems=[];
+  try{problems=(await db.listProblems()).filter(p=>p.status==='published');}
+  catch(e){panel.innerHTML='<p class="msg err">문제은행 조회 실패: '+esc(e?.message||'오류')+'</p>';return;}
+
+  const state={unit:'',cognition:'',difficulty:'',q:''};
+  const draw=()=>{
+    const list=problems.filter(p=>
+      (!state.unit||p.unit===state.unit)&&
+      (!state.cognition||p.cognition===state.cognition)&&
+      (!state.difficulty||String(p.difficulty||'')===state.difficulty)&&
+      (!state.q||[p.source_citation,p.body_latex,(p.tags||[]).join(' ')].filter(Boolean).join(' ').toLowerCase().includes(state.q.toLowerCase())));
+    panel.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h3 style="margin:0">${svg('file')}은행에서 가져오기 <span class="sub">공개 상태 ${list.length}문항</span></h3>
+        <button class="btn line sm bp_close">닫기</button></div>
+      <div class="row" style="margin-bottom:10px">
+        <div class="field"><label>단원</label><select class="bp_unit"><option value="">전체</option>${UNITS.map(u=>`<option ${state.unit===u?'selected':''}>${esc(u)}</option>`).join('')}</select></div>
+        <div class="field"><label>사고과정</label><select class="bp_cog"><option value="">전체</option>${COGNITIONS.map(v=>`<option ${state.cognition===v?'selected':''}>${esc(v)}</option>`).join('')}</select></div>
+        <div class="field"><label>난이도</label><select class="bp_diff"><option value="">전체</option>${[1,2,3,4,5].map(n=>`<option value="${n}" ${state.difficulty===String(n)?'selected':''}>${n}단계</option>`).join('')}</select></div>
+        <div class="field" style="flex:2"><label>검색</label><input class="bp_q" value="${esc(state.q)}" placeholder="출처·본문·태그"></div>
+      </div>
+      ${list.length?`<div style="overflow-x:auto"><table><thead><tr>
+        <th style="width:40px"></th><th>단원·사고</th><th class="num">난이도</th><th class="num">배점</th><th>출처</th><th>태그</th>
+      </tr></thead><tbody>
+      ${list.map(p=>`<tr><td><input type="checkbox" class="bp_chk" value="${esc(p.id)}"></td>
+        <td>${esc(p.unit||'-')} · ${esc(p.cognition||'-')}</td>
+        <td class="num">${p.difficulty==null?'-':esc(p.difficulty)}</td>
+        <td class="num">${p.points==null?'-':esc(p.points)}</td>
+        <td class="muted" style="font-size:12px">${esc(p.source_citation||'미기재')}${p.license_scope==='internal'?' <span class="chip red" style="font-size:10px">내부 전용</span>':''}</td>
+        <td class="muted" style="font-size:11.5px">${esc((p.tags||[]).join(', '))}</td></tr>`).join('')}
+      </tbody></table></div>`:'<p class="muted">조건에 맞는 공개 문항이 없습니다. [문제은행]에서 상태를 [공개]로 바꾸면 여기에 나타납니다.</p>'}
+      <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:12px">
+        <button class="btn line bp_close2">취소</button>
+        <button class="btn bp_add">선택 문항 추가</button></div>`;
+    panel.querySelectorAll('.bp_close,.bp_close2').forEach(b=>b.addEventListener('click',close));
+    const bindF=(sel,key)=>{const el=panel.querySelector(sel);if(el)el.addEventListener('change',()=>{state[key]=el.value;draw();});};
+    bindF('.bp_unit','unit');bindF('.bp_cog','cognition');bindF('.bp_diff','difficulty');
+    const qi=panel.querySelector('.bp_q');if(qi)qi.addEventListener('change',()=>{state.q=qi.value.trim();draw();});
+    const addBtn=panel.querySelector('.bp_add');
+    if(addBtn)addBtn.addEventListener('click',()=>{
+      const ids=[...panel.querySelectorAll('.bp_chk')].filter(x=>x.checked).map(x=>x.value);
+      if(!ids.length)return;
+      onPick(ids.map(id=>problems.find(p=>p.id===id)).filter(Boolean));
+      close();
+    });
+  };
+  draw();
+}
+
 function openTagMenu(td,dedItems){
   const curTag=td.dataset.tag||'',curNote=td.dataset.note||'',curPhoto=td.dataset.photo||'';
   const maxPts=Number(td.dataset.max)||0;
@@ -320,4 +393,5 @@ function openTagMenu(td,dedItems){
   });
 }
 
-export { renderTests, renderSessions, renderQuestionDef, renderScoreGrid, openTagMenu };
+// openBankPicker 는 버튼 클릭으로만 열리는 경로라 테스트에서 직접 호출할 수 있게 함께 내보낸다.
+export { renderTests, renderSessions, renderQuestionDef, renderScoreGrid, openTagMenu, openBankPicker };

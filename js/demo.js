@@ -151,7 +151,41 @@ function buildDemoStore(){
     due_date:'2026-07-25',note:'증감표 작성 후 개형 스케치 루틴화.',
     baseline_rate:61,status:'active',created_at:'2026-07-11'});
 
-  return {students,universities,student_targets,test_sessions,questions,scores,homework_records,essay_gradings,teacher_comments,counseling_notes,prescriptions,accounts:[]};
+  // 문제은행 샘플 3건 — 공개/검토중/변형 상태를 각각 보여준다
+  const problems=[];
+  const pGacheon={id:uuid(),origin:'기출',parent_id:null,university_id:uByName('가천대')?.id||null,
+    exam_year:2025,exam_round:'수시 논술 자연',unit:'삼각함수',cognition:'활용',difficulty:4,
+    body_format:'latex',body_latex:'삼각형 $ABC$ 에서 $\\angle A = \\frac{\\pi}{3}$ 이고 $b+c=10$ 일 때, 넓이의 최댓값을 구하시오.',
+    body_image_paths:null,answer_latex:'$\\frac{25\\sqrt{3}}{4}$',
+    solution_latex:'$S=\\frac{1}{2}bc\\sin A$ 에 산술·기하평균을 적용한다.',
+    rubric:[{criterion:'조건을 식으로 옮김',points:2,tag:'조건 해석'},
+            {criterion:'최댓값 판정 근거 서술',points:3,tag:'풀이 근거 누락'},
+            {criterion:'계산 정확도',points:1,tag:'계산 실수'}],
+    points:10,tags:['도형','최댓값','산술기하'],status:'published',license_scope:'internal',
+    source_citation:'2025학년도 가천대 논술 자연계 3번(데모)',created_at:'2026-05-20',updated_at:'2026-05-20'};
+  problems.push(pGacheon);
+  problems.push({id:uuid(),origin:'변형',parent_id:pGacheon.id,university_id:uByName('가천대')?.id||null,
+    exam_year:null,exam_round:null,unit:'삼각함수',cognition:'활용',difficulty:3,
+    body_format:'latex',body_latex:'삼각형 $ABC$ 에서 $\\angle A=\\frac{\\pi}{3}$, $b+c=12$ 일 때 넓이의 최댓값을 구하시오.',
+    body_image_paths:null,answer_latex:'$9\\sqrt{3}$',solution_latex:'원본과 동일한 구조, 수치만 변경.',
+    rubric:[{criterion:'조건을 식으로 옮김',points:2,tag:'조건 해석'},
+            {criterion:'최댓값 판정 근거 서술',points:3,tag:'풀이 근거 누락'}],
+    points:8,tags:['도형','최댓값','변형'],status:'published',license_scope:'own',
+    source_citation:'자체 변형(원본: 2025 가천대 3번)(데모)',created_at:'2026-06-02',updated_at:'2026-06-02'});
+  problems.push({id:uuid(),origin:'자체',parent_id:null,university_id:uByName('국민대')?.id||null,
+    exam_year:null,exam_round:null,unit:'미분',cognition:'그래프',difficulty:2,
+    body_format:'latex',body_latex:'함수 $f(x)=x^3-3x$ 의 극값을 구하고 그래프의 개형을 서술하시오.',
+    body_image_paths:null,answer_latex:'극댓값 $2$, 극솟값 $-2$',
+    solution_latex:'$f\'(x)=3x^2-3$ 의 부호 변화로 증감표를 작성한다.',
+    rubric:[{criterion:'증감표 작성',points:3,tag:'풀이 근거 누락'}],
+    points:8,tags:['극값','증감표'],status:'review',license_scope:'own',
+    source_citation:'자체 제작 · 수특 미분 6단원 변형(데모)',created_at:'2026-06-20',updated_at:'2026-06-20'});
+
+  // 은행 ↔ 회차 연결 데모: 첫 회차 1번 문항을 가천대 기출과 연결해 누적 실적이 보이게 한다
+  const firstQ=questions.find(q=>q.unit==='삼각함수')||questions[0];
+  if(firstQ)firstQ.problem_id=pGacheon.id;
+
+  return {students,universities,student_targets,test_sessions,questions,scores,homework_records,essay_gradings,teacher_comments,counseling_notes,prescriptions,problems,accounts:[]};
 }
 
 export { buildDemoStore };

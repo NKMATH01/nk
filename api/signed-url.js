@@ -1,13 +1,15 @@
 /* ═══════════════════════════════════════════════════════════════════
-   POST /api/signed-url   { path }   (Authorization: Bearer <토큰>)
+   POST /api/signed-url   { path, bucket }   (Authorization: Bearer <토큰>)
      →  { signedUrl, expiresIn }
 
-   grading-photos 버킷이 private 로 바뀌므로, 채점 사진은 이 엔드포인트가
-   발급한 10분짜리 서명 URL 로만 볼 수 있다.
+   private 버킷의 파일을 10분짜리 서명 URL 로만 열람하게 한다.
 
-   권한
-     admin           : 전체 허용
-     student/parent  : 경로가 자기 student_id 에 속할 때만 허용
+   버킷별 권한
+     grading-photos (기본)
+       admin           : 전체 허용
+       student/parent  : 경로가 자기 student_id 에 속할 때만 허용
+     problem-images
+       admin 전용. 기출 원문 저작권 통제 때문에 학생·학부모는 아예 차단한다.
 
    경로 규칙
      신규 업로드  <student_id>/<question_id>_<timestamp>.<ext>
@@ -17,7 +19,12 @@
 "use strict";
 const L = require("./_lib.js");
 
-const BUCKET = "grading-photos";
+const DEFAULT_BUCKET = "grading-photos";
+// 허용 목록 방식 — 여기 없는 버킷 이름은 거부한다(임의 버킷 열람 방지).
+const BUCKETS = {
+  "grading-photos": { adminOnly: false },
+  "problem-images": { adminOnly: true },
+};
 const EXPIRES_IN = 600;   // 10분
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -54,14 +61,21 @@ module.exports = async function handler(req, res){
     const body = await L.readJsonBody(req);
     const path = normalizePath(body && body.path);
 
-    if(auth.app_role !== "admin"){
+    const bucket = String((body && body.bucket) || DEFAULT_BUCKET);
+    const rule = Object.prototype.hasOwnProperty.call(BUCKETS, bucket) ? BUCKETS[bucket] : null;
+    if(!rule) throw L.fail(400, "알 수 없는 버킷입니다.");
+
+    const isAdmin = auth.app_role === "admin";
+    if(rule.adminOnly){
+      if(!isAdmin) throw L.fail(403, "이 파일을 볼 권한이 없습니다.");
+    }else if(!isAdmin){
       const owner = pathStudentId(path);
       if(!owner || !auth.student_id || owner !== String(auth.student_id).toLowerCase()){
         throw L.fail(403, "이 파일을 볼 권한이 없습니다.");
       }
     }
 
-    const out = await L.storageRest("object/sign/" + BUCKET + "/" + path, {
+    const out = await L.storageRest("object/sign/" + bucket + "/" + path, {
       method: "POST",
       body: { expiresIn: EXPIRES_IN },
     });
