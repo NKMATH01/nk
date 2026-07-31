@@ -331,6 +331,9 @@ function openTagMenu(td,dedItems){
     <div style="font-size:12px;font-weight:700;margin-bottom:4px">사진 첨부</div>
     <div class="tm_photo" style="margin-bottom:8px">${curPhoto?`<div><span data-photo-path="${esc(storagePathFromValue(curPhoto))}" class="muted" style="font-size:11px">사진 불러오는 중...</span> <button type="button" class="btn danger sm tm_rmphoto">사진 삭제</button></div>`:''}</div>
     <input type="file" class="tm_file" accept="image/*" style="font-size:12px;margin-bottom:10px">
+    <div class="divider"></div>
+    <div style="font-size:12px;font-weight:700;margin-bottom:4px">답안지 · AI 분석</div>
+    <div class="tm_ai" style="margin-bottom:8px"><span class="muted" style="font-size:11.5px">확인 중...</span></div>
     <div style="display:flex;gap:6px;justify-content:flex-end"><button type="button" class="btn line sm tm_close">닫기</button><button type="button" class="btn sm tm_save">저장</button></div>
     <div class="tm_msg msg" style="margin-top:6px"></div>`;
   const rect=td.getBoundingClientRect();panel.style.left=Math.min(rect.left,window.innerWidth-300)+'px';panel.style.top=Math.min(rect.bottom+4,window.innerHeight-220)+'px';
@@ -360,6 +363,9 @@ function openTagMenu(td,dedItems){
     }
   }
   panel.querySelectorAll('.tm_dedchk').forEach(c=>c.addEventListener('change',recalcDeduction));
+
+  // AI 분석 섹션(관리자 전용). 키 미설정이면 버튼을 비활성화하고 이유를 보여준다.
+  initAiSection(panel,td,markTag);
   panel.querySelector('.tm_rmphoto')?.addEventListener('click',()=>{removePhoto=true;panel.querySelector('.tm_photo').innerHTML='<span class="muted" style="font-size:12px">사진을 삭제합니다(저장 시 반영).</span>';});
   panel.querySelector('.tm_close').addEventListener('click',close);
   panel.querySelector('.tm_save').addEventListener('click',async()=>{
@@ -393,5 +399,111 @@ function openTagMenu(td,dedItems){
   });
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   감점 패널의 AI 분석 섹션
+
+   원칙: AI 값은 어떤 경우에도 자동 반영되지 않는다.
+     · 제안은 회색 점선 상자로 감싸 강사 입력과 시각적으로 구분한다.
+     · [반영] 버튼을 눌러야 grade-review 를 거쳐 scores 에 기록된다.
+     · tags_only 모드에서는 점수 제안 자체가 오지 않는다(앵커링 방지).
+   ═══════════════════════════════════════════════════════════════════ */
+async function initAiSection(panel,td,markTag){
+  const box=panel.querySelector('.tm_ai');
+  if(!box)return;
+  const set=html=>{const b=panel.querySelector('.tm_ai');if(b)b.innerHTML=html;};
+
+  if(app.DEMO){set('<span class="chip gray">데모 모드 — AI 분석을 실행하지 않습니다</span>');return;}
+  if(app.cur.role!=='admin'){set('<span class="muted" style="font-size:11.5px">관리자만 사용할 수 있습니다.</span>');return;}
+
+  const status=await db.getAiStatus();
+  if(!status||!status.configured){
+    set('<span class="chip amber">AI 미설정</span>'
+      +'<div class="muted" style="font-size:11.5px;margin-top:4px">GEMINI_API_KEY 가 등록되지 않았습니다. [설정] 화면의 AI 상태 카드를 참고하세요. 사진 첨부·수동 채점은 그대로 사용할 수 있습니다.</div>');
+    return;
+  }
+
+  const sid=td.dataset.s,qid=td.dataset.q;
+  let subs=[];
+  try{subs=await db.listSubmissions(sid,qid);}catch(e){/* 조회 실패는 아래에서 안내 */}
+  const sub=subs&&subs.length?subs[0]:null;
+
+  const modeChip=status.mode==='tags_only'
+    ?'<span class="chip blue" title="점수 제안 없이 감점 태그만 받습니다(앵커링 방지)">태그만</span>'
+    :'<span class="chip purple">점수 제안 포함</span>';
+
+  if(!sub){
+    set(modeChip+'<div class="muted" style="font-size:11.5px;margin-top:4px">이 학생의 답안 제출물이 없습니다. 학생이 [첨삭 이력] 화면에서 답안 사진을 올리면 분석할 수 있습니다.</div>');
+    return;
+  }
+
+  set(modeChip+' <span class="muted" style="font-size:11px">제출 '+esc(fmtDate(sub.submitted_at))+'</span>'
+    +'<div style="margin-top:6px"><button type="button" class="btn line sm ai_run" data-stage="transcribe">1. 답안 전사</button> '
+    +'<button type="button" class="btn line sm ai_run" data-stage="grade">2. 감점 분석</button></div>'
+    +(sub.ocr_text?'<div class="muted" style="font-size:11.5px;margin-top:4px">전사 결과가 이미 있습니다(재실행 시 갱신).</div>':'')
+    +'<div class="ai_out" style="margin-top:6px"></div>');
+
+  panel.querySelectorAll('.ai_run').forEach(btn=>btn.addEventListener('click',async()=>{
+    const out=panel.querySelector('.ai_out');
+    const stage=btn.dataset.stage;
+    panel.querySelectorAll('.ai_run').forEach(b=>b.disabled=true);
+    out.innerHTML='<span class="muted" style="font-size:11.5px">분석 중... (10~30초 걸릴 수 있습니다)</span>';
+    try{
+      const r=await db.runGrading(sub.id,stage);
+      const run=r&&r.run;
+      if(!run){out.innerHTML='<span class="msg err">응답이 비어 있습니다.</span>';return;}
+      if(run.status==='failed'){
+        out.innerHTML='<div class="msg err">실패: '+esc(run.error_text||'알 수 없는 오류')+'</div>'
+          +'<div class="muted" style="font-size:11px;margin-top:4px">다시 시도하거나, 계속 실패하면 사진 화질을 확인하세요.</div>';
+        return;
+      }
+      renderAiResult(out,run,stage,td,markTag);
+    }catch(e){
+      out.innerHTML='<div class="msg err">'+esc(e?.message||'오류')+'</div>';
+    }finally{
+      panel.querySelectorAll('.ai_run').forEach(b=>b.disabled=false);
+    }
+  }));
+}
+
+/* AI 결과 표시 — 회색 점선 상자로 "아직 확정 아님"을 시각적으로 못박는다. */
+function renderAiResult(out,run,stage,td,markTag){
+  const boxStyle='border:1.5px dashed var(--line);border-radius:9px;padding:8px;background:#FAFAFB;color:var(--ink-2)';
+  if(stage==='transcribe'){
+    out.innerHTML='<div style="'+boxStyle+'">'
+      +'<div style="font-size:11px;font-weight:700;margin-bottom:4px">AI 전사 (미확정)</div>'
+      +'<div style="font-size:12px;white-space:pre-wrap">'+esc(run.feedback_text||'(내용 없음)')+'</div>'
+      +(run.confidence!=null?'<div class="muted" style="font-size:11px;margin-top:4px">판독 확신도 '+Math.round(run.confidence*100)+'%</div>':'')
+      +'</div>';
+    return;
+  }
+  const tags=run.wrong_reason_tags||[];
+  const rb=run.rubric_breakdown||{};
+  out.innerHTML='<div style="'+boxStyle+'">'
+    +'<div style="font-size:11px;font-weight:700;margin-bottom:4px">AI 제안 (미확정 · 강사 확인 필요)</div>'
+    +(tags.length?'<div style="margin-bottom:4px">'+tags.map(t=>'<span class="chip amber" style="margin-right:4px">'+esc(t)+'</span>').join('')+'</div>'
+      :'<div class="muted" style="font-size:12px">감점 사유 없음으로 판단</div>')
+    +(run.suggested_score!=null?'<div style="font-size:12px">제안 점수: <b>'+esc(run.suggested_score)+'</b></div>':'')
+    +(run.feedback_text?'<div style="font-size:12px;margin-top:4px">'+esc(run.feedback_text)+'</div>':'')
+    +(rb.evidence?'<div class="muted" style="font-size:11px;margin-top:4px">근거: '+esc(rb.evidence)+'</div>':'')
+    +(run.confidence!=null?'<div class="muted" style="font-size:11px;margin-top:2px">확신도 '+Math.round(run.confidence*100)+'%</div>':'')
+    +'<div style="margin-top:6px"><button type="button" class="btn sm ai_apply">이 제안 반영</button>'
+    +' <span class="muted" style="font-size:11px">누르기 전에는 아무것도 저장되지 않습니다</span></div>'
+    +'<div class="ai_apply_msg msg"></div></div>';
+
+  out.querySelector('.ai_apply')?.addEventListener('click',async()=>{
+    const m=out.querySelector('.ai_apply_msg');m.className='msg';m.textContent='';
+    const inp=td.querySelector('input');
+    const scoreVal=run.suggested_score!=null?Number(run.suggested_score):(inp.value===''?null:Number(inp.value));
+    try{
+      await db.submitGradeReview({grading_run_id:run.id,final_score:scoreVal,
+        final_tags:tags,final_comment:run.feedback_text||null});
+      // 화면에도 즉시 반영(서버는 scores 에 이미 기록됨)
+      if(scoreVal!=null){inp.value=String(scoreVal);inp.dispatchEvent(new Event('input',{bubbles:true}));}
+      if(tags.length)markTag(tags[0]);
+      m.className='msg ok';m.textContent='확정되어 채점에 반영되었습니다.';
+    }catch(e){m.className='msg err';m.textContent='반영 실패: '+(e?.message||'오류');}
+  });
+}
+
 // openBankPicker 는 버튼 클릭으로만 열리는 경로라 테스트에서 직접 호출할 수 있게 함께 내보낸다.
-export { renderTests, renderSessions, renderQuestionDef, renderScoreGrid, openTagMenu, openBankPicker };
+export { renderTests, renderSessions, renderQuestionDef, renderScoreGrid, openTagMenu, openBankPicker, initAiSection };

@@ -231,6 +231,25 @@ async function storageRest(path, options){
   try{ return JSON.parse(text); }catch(e){ return null; }
 }
 
+/* private 버킷의 파일을 서버가 직접 바이트로 읽는다.
+   AI 전사는 서명 URL 을 거치지 않는다 — 외부에 노출되는 URL 을 만들 이유가 없고,
+   service_role 로 바로 읽는 편이 단계가 적어 실패 지점도 적다. */
+async function storageDownload(bucket, path){
+  const base = env("SUPABASE_URL").replace(/\/+$/, "");
+  const key = env("SUPABASE_SERVICE_ROLE_KEY");
+  const url = base + "/storage/v1/object/" + encodeURIComponent(bucket) + "/" +
+    String(path).split("/").map(encodeURIComponent).join("/");
+  const res = await fetch(url, { headers: { apikey: key, Authorization: "Bearer " + key } });
+  if(!res.ok){
+    console.error("[api] storageDownload", res.status, await res.text().catch(() => ""));
+    if(res.status === 404) throw fail(404, "파일을 찾을 수 없습니다.");
+    throw fail(502, "파일을 읽지 못했습니다.");
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  const mime = res.headers.get("content-type") || "image/jpeg";
+  return { buffer: buf, mime: mime.split(";")[0].trim() };
+}
+
 // PostgREST 쿼리 문자열용 값 이스케이프(전화번호는 숫자만이라 실질 위험은 없으나 방어적으로).
 function eqParam(v){ return encodeURIComponent(String(v)); }
 
@@ -255,5 +274,5 @@ module.exports = {
   normPhone, hashPassword, safeEqualHex,
   hashScrypt, verifyScrypt, verifyPassword,
   signJwt, verifyJwt, requireAuth, requireAdmin, buildClaims,
-  sbRest, storageRest, eqParam,
+  sbRest, storageRest, storageDownload, eqParam,
 };

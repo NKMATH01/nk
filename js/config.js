@@ -17,7 +17,7 @@ const SESSION_KEY = 'nk_yak_session_v4';
 const SESSION_DAYS = 30;      // 참고값. 실제 만료는 서버가 발급하는 JWT의 exp가 결정한다(api/_lib.js).
 const TODAY = new Date(new Date().setHours(0,0,0,0));
 // db/migrations/ 에 추가한 마이그레이션 버전을 여기에도 함께 등록한다.
-const EXPECTED_MIGRATIONS = ['0001_baseline','0002_migration_tracking','0003_readiness_snapshots','0004_accounts_lockdown','0005_jwt_claims_helpers','0006_rls_policies','0007_storage_private','0008_care_loop','0009_problem_bank'];
+const EXPECTED_MIGRATIONS = ['0001_baseline','0002_migration_tracking','0003_readiness_snapshots','0004_accounts_lockdown','0005_jwt_claims_helpers','0006_rls_policies','0007_storage_private','0008_care_loop','0009_problem_bank','0010_ai_grading'];
 
 function isConfigured(){return SUPABASE_URL&&SUPABASE_URL!=='여기에_붙여넣기'&&SUPABASE_ANON_KEY&&SUPABASE_ANON_KEY!=='여기에_붙여넣기';}
 function cdnLoaded(){return typeof supabase!=='undefined'&&supabase&&typeof supabase.createClient==='function';}

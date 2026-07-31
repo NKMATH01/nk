@@ -36,8 +36,9 @@ async function renderEssays(c){
       ${e.comment?`<div class="muted" style="font-size:12.5px;margin-top:8px;padding:8px;background:var(--bg);border-radius:8px">${esc(e.comment)}</div>`:''}</div>`;}).join(''):'<p class="muted">첨삭 기록이 없습니다.</p>';
 
   let wrongCard='';
+  let ctx=null;   // 오답노트와 답안 제출 카드가 같은 컨텍스트를 공유한다(조회 1회)
   if(readonly){
-    const ctx=await loadContext();const b=await studentBundle(sid,ctx);
+    ctx=await loadContext();const b=await studentBundle(sid,ctx);
     const maxByWeek={};b.perSession.forEach(s=>{maxByWeek[s.week||0]=(s.total||s.pts||0);});
     const byWeek={};b.questionRecords.forEach(r=>{const w=r.week||0;(byWeek[w]=byWeek[w]||[]).push(r);});
     const wks=Object.keys(byWeek).map(Number).sort((a,b)=>b-a);
@@ -57,8 +58,12 @@ async function renderEssays(c){
     wrongCard=`<div class="card"><h3>${svg('activity')}주간테스트 오답 노트</h3>${inner}</div>`;
   }
 
-  c.innerHTML=await studentSelector()+form+`<div class="card"><h3>${svg('clock')}첨삭 이력 (최신순)</h3>${timeline}</div>`+wrongCard;
+  // 학생 답안 제출: 본인 문항에 사진만 올린다. AI 결과는 여기 표시하지 않는다(RLS 로도 차단).
+  const submitCard=readonly?await studentSubmitCardHTML(sid,ctx):'';
+
+  c.innerHTML=await studentSelector()+form+`<div class="card"><h3>${svg('clock')}첨삭 이력 (최신순)</h3>${timeline}</div>`+wrongCard+submitCard;
   hydrateSignedPhotos(c);   // private 버킷이라 서명 URL 을 받아 채운다
+  if(readonly)bindStudentSubmit(c,sid);
   bindStudentSelector(()=>renderEssays(c));
   if(!readonly){
     $('es_add').addEventListener('click',async()=>{
@@ -75,4 +80,67 @@ async function renderEssays(c){
   }
 }
 
-export { renderEssays };
+/* ═══════════════════════════════════════════════════════════════════
+   학생: 내 답안 제출
+
+   학생은 사진을 올리기만 한다. AI 분석 실행도, 결과 열람도 학생 몫이 아니다
+   (grading_runs 는 RLS 로 관리자 전용 — 확정 전 제안이 새면 안 되므로).
+   ═══════════════════════════════════════════════════════════════════ */
+async function studentSubmitCardHTML(sid,ctx){
+  const sessions=(ctx.sessions||[]).slice().sort((a,b)=>b.week_no-a.week_no);
+  const qs=(ctx.questions||[]);
+  const sessById={};sessions.forEach(s=>sessById[s.id]=s);
+  // 최근 회차 문항만 보여준다(선택지가 너무 길어지지 않게)
+  const recent=sessions.slice(0,3).map(s=>s.id);
+  const opts=qs.filter(q=>recent.includes(q.session_id))
+    .sort((a,b)=>{const sa=sessById[a.session_id],sb=sessById[b.session_id];
+      return (sb.week_no-sa.week_no)||(a.no-b.no);})
+    .map(q=>{const s=sessById[q.session_id];
+      return `<option value="${esc(q.id)}">${esc(s.week_no)}주차 ${esc(q.no)}번 · ${esc(q.unit||'')}</option>`;}).join('');
+
+  let mine=[];
+  try{mine=await db.listSubmissions(sid,null);}catch(e){}
+  const list=mine.length?mine.slice(0,5).map(s=>{
+    const q=qs.find(x=>x.id===s.question_id);const ss=q?sessById[q.session_id]:null;
+    return `<div class="kv"><span>${ss?esc(ss.week_no)+'주차 ':''}${q?esc(q.no)+'번':'문항'}</span><span class="muted">${esc(fmtDate(s.submitted_at))} 제출</span></div>`;
+  }).join(''):'<p class="muted" style="font-size:12.5px">아직 제출한 답안이 없습니다.</p>';
+
+  return `<div class="card"><h3>${svg('pen')}내 답안 제출 <span class="sub">사진을 올리면 선생님이 확인합니다</span></h3>
+    ${opts?`<div class="row">
+      <div class="field" style="flex:2"><label>문항 선택</label><select id="sub_q">${opts}</select></div>
+      <div class="field" style="flex:2"><label>답안 사진</label><input type="file" id="sub_file" accept="image/*" style="font-size:12px"></div>
+      <button class="btn" id="sub_go">제출</button></div>
+      <div id="sub_msg" class="msg"></div>`
+      :'<p class="muted">아직 등록된 문항이 없습니다.</p>'}
+    <div class="divider"></div>
+    <div class="muted" style="font-size:12px;font-weight:700;margin-bottom:4px">최근 제출</div>
+    ${list}</div>`;
+}
+
+function bindStudentSubmit(c,sid){
+  const btn=$('sub_go');
+  if(!btn)return;
+  btn.addEventListener('click',async()=>{
+    const m=$('sub_msg');m.className='msg';m.textContent='';
+    const qid=$('sub_q').value;
+    const file=$('sub_file').files[0];
+    if(!qid){m.className='msg err';m.textContent='문항을 선택하세요.';return;}
+    if(!file){m.className='msg err';m.textContent='답안 사진을 선택하세요.';return;}
+    if(app.DEMO){m.className='msg ok';m.textContent='데모 모드에서는 제출이 저장되지 않습니다.';return;}
+    if(file.size>8*1024*1024){m.className='msg err';m.textContent='사진은 8MB 이하만 올릴 수 있습니다.';return;}
+    btn.disabled=true;m.textContent='업로드 중...';
+    try{
+      const ext=(file.name.split('.').pop()||'jpg').toLowerCase();
+      // 경로 최상위를 학생 id 로 둬야 서명 URL 소유자 확인이 통과한다.
+      const path=sid+'/'+qid+'_'+Date.now()+'.'+ext;
+      const up=await app.sb.storage.from('answer-sheets').upload(path,file);
+      if(up.error)throw up.error;
+      await db.insertSubmission({student_id:sid,question_id:qid,input_type:'photo',image_paths:[path]});
+      m.className='msg ok';m.textContent='제출되었습니다.';
+      renderEssays(c);
+    }catch(e){m.className='msg err';m.textContent='제출 실패: '+(e?.message||'오류');}
+    finally{btn.disabled=false;}
+  });
+}
+
+export { renderEssays, studentSubmitCardHTML };

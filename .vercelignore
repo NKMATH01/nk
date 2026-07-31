@@ -4,4 +4,5 @@ PRD_*.md
 docs/
 db/
 SMOKE_CHECKLIST.md
+scripts/
 .git

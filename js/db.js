@@ -157,6 +157,26 @@ const db={
   async getSignedPhotoUrl(path,bucket){if(app.DEMO)return null;
     const r=await apiFetch('/api/signed-url',{method:'POST',body:{path,bucket:bucket||'grading-photos'}});return r.signedUrl||null;},
 
+  /* ── AI 자동채점 ──
+     grading_runs 는 RLS 로 관리자만 읽힌다. 확정 전 제안이 학생에게 새지 않도록.
+     AI 미설정(503)은 정상 상태로 취급해 화면이 죽지 않게 한다. */
+  async getAiStatus(){if(app.DEMO)return {configured:false,demo:true,model:'-',mode:'tags_only'};
+    try{return await apiFetch('/api/ai-status');}
+    catch(e){return {configured:false,error:e&&e.message};}},
+  async listSubmissions(sid,qid){if(app.DEMO)return (app.store.submissions||[]).filter(s=>(!sid||s.student_id===sid)&&(!qid||s.question_id===qid));
+    let q=app.sb.from('submissions').select('*').order('submitted_at',{ascending:false});
+    if(sid)q=q.eq('student_id',sid);
+    if(qid)q=q.eq('question_id',qid);
+    return await sbq(q,'제출물 조회',[]);},
+  async insertSubmission(s){if(app.DEMO){const o=Object.assign({id:uuid(),submitted_at:todayStr()},s);(app.store.submissions=app.store.submissions||[]).unshift(o);return o;}
+    const {data,error}=await app.sb.from('submissions').insert(s).select().single();if(error)throw error;return data;},
+  async listGradingRuns(submissionId){if(app.DEMO)return [];
+    return await sbq(app.sb.from('grading_runs').select('*').eq('submission_id',submissionId).order('created_at',{ascending:false}),'AI 기록 조회',[]);},
+  async runGrading(submissionId,stage){if(app.DEMO)throw new Error('데모 모드에서는 AI 분석을 실행하지 않습니다.');
+    return await apiFetch('/api/grade-run',{method:'POST',body:{submission_id:submissionId,stage}});},
+  async submitGradeReview(payload){if(app.DEMO)throw new Error('데모 모드에서는 확정할 수 없습니다.');
+    return await apiFetch('/api/grade-review',{method:'POST',body:payload});},
+
   /* ── 문제은행 (관리자 전용) ──
      RLS 로도 막혀 있지만, 화면 라우트 자체를 학생 메뉴에 넣지 않아 이중으로 차단한다. */
   async listProblems(){if(app.DEMO)return app.store.problems.slice();
