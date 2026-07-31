@@ -318,9 +318,12 @@ const UNITS = ['지수·로그함수','삼각함수','수열','극한과 연속'
 const COGNITIONS = ['개념','계산','그래프','활용'];
 const WRONG_REASONS = ['조건 해석','계산 실수','개념 누락','풀이 근거 누락','시간 부족'];
 const RUBRIC = ['조건 해석','풀이 과정','최종 답안'];
-const SESSION_KEY = 'nk_yak_session_v2';
-const SESSION_DAYS = 30;
+// v3부터 세션에 서버 발급 JWT를 담는다. 구 v2 세션은 무시되어 재로그인이 필요하다.
+const SESSION_KEY = 'nk_yak_session_v3';
+const SESSION_DAYS = 30;      // 참고값. 실제 만료는 서버가 발급하는 JWT의 exp가 결정한다(api/_lib.js).
 const TODAY = new Date(new Date().setHours(0,0,0,0));
+// db/migrations/ 에 추가한 마이그레이션 버전을 여기에도 함께 등록한다.
+const EXPECTED_MIGRATIONS = ['0001_baseline','0002_migration_tracking','0003_readiness_snapshots','0004_accounts_lockdown'];
 
 /* ═══════════ SVG 아이콘 (Lucide 스타일, 이모지 미사용) ═══════════ */
 const ICONS = {
@@ -575,6 +578,21 @@ function buildDemoStore(){
 function apiErr(prefix,e){console.error(prefix,e);const g=$('globalErr');if(g){g.style.display='block';g.textContent=prefix+': '+(e?.message||'네트워크 오류. 인터넷 연결을 확인하세요.');}return null;}
 async function sbq(promise,prefix,fallback){try{const {data,error}=await promise;if(error)throw error;return data||fallback;}catch(e){apiErr(prefix,e);return fallback;}}
 
+/* 서버 함수(/api/*) 호출. 계정·비밀번호는 anon 키로 직접 접근하지 않고 여기를 거친다.
+   세션 토큰이 있으면 Authorization 헤더로 붙인다. 실패 시 서버 메시지를 그대로 던진다. */
+async function apiFetch(path,options){
+  const opt=options||{};
+  const headers=Object.assign({'Content-Type':'application/json'},opt.headers||{});
+  if(session&&session.token)headers['Authorization']='Bearer '+session.token;
+  const res=await fetch(path,{method:opt.method||'GET',headers,body:opt.body?JSON.stringify(opt.body):undefined});
+  let data=null;try{data=await res.json();}catch(e){}
+  if(!res.ok){
+    if(res.status===401&&session){doLogout();}
+    throw new Error((data&&data.error)||'서버 오류('+res.status+')');
+  }
+  return data||{};
+}
+
 const db={
   async listStudents(){if(DEMO)return store.students.slice();return await sbq(sb.from('students').select('*').order('created_at'),'학생 조회',[]);},
   async listUniversities(){if(DEMO)return store.universities.slice();return await sbq(sb.from('universities').select('*').order('region').order('name'),'대학 조회',[]);},
@@ -597,9 +615,10 @@ const db={
     return await sbq(sb.from('teacher_comments').select('*').eq('student_id',sid).eq('week_no',weekNo).maybeSingle(),'코멘트 조회',null);},
   async listTeacherComments(sid){if(DEMO)return store.teacher_comments.filter(t=>t.student_id===sid).slice().sort((a,b)=>b.week_no-a.week_no);
     return await sbq(sb.from('teacher_comments').select('*').eq('student_id',sid).order('week_no',{ascending:false}),'코멘트 조회',[]);},
-  async getAccountByPhone(phone){if(DEMO)return store.accounts.find(a=>a.phone===normPhone(phone))||null;
-    const {data,error}=await sb.from('accounts').select('*').eq('phone',normPhone(phone)).maybeSingle();if(error)throw error;return data;},
-  async listAccountsByStudent(sid){if(DEMO)return store.accounts.filter(a=>a.student_id===sid);return await sbq(sb.from('accounts').select('id,phone,role').eq('student_id',sid),'계정 조회',[]);},
+  // accounts 는 서버 함수 경유. 브라우저는 password_hash 를 받지 않는다.
+  async listAccountsByStudent(sid){if(DEMO)return store.accounts.filter(a=>a.student_id===sid);
+    try{const r=await apiFetch('/api/accounts?student_id='+encodeURIComponent(sid));return r.accounts||[];}
+    catch(e){apiErr('계정 조회',e);return [];}},
 
   async insertStudent(s){if(DEMO){const o=Object.assign({id:uuid(),created_at:todayStr()},s);store.students.push(o);return o;}
     const {data,error}=await sb.from('students').insert(s).select().single();if(error)throw error;return data;},
@@ -645,12 +664,13 @@ const db={
     const ex=await sb.from('teacher_comments').select('id').eq('student_id',sid).eq('week_no',weekNo).maybeSingle();
     if(ex.data){await sb.from('teacher_comments').update({comment}).eq('id',ex.data.id);}
     else{const {error}=await sb.from('teacher_comments').insert({student_id:sid,week_no:weekNo,comment});if(error)throw error;}},
-  async updateAccountPassword(id,hash){if(DEMO)return;const {error}=await sb.from('accounts').update({password_hash:hash}).eq('id',id);if(error)throw error;},
-  async upsertAccount(phone,hash,role,sid){if(DEMO)return 'demo';
-    const p=normPhone(phone);const ex=await this.getAccountByPhone(p);
-    if(ex){if(ex.role!==role||(ex.student_id&&sid&&ex.student_id!==sid))throw new Error('이 전화번호는 이미 다른 계정('+ex.role+')에서 사용 중입니다. 다른 번호를 입력하세요.');
-      const {error}=await sb.from('accounts').update({password_hash:hash,role,student_id:sid||null}).eq('id',ex.id);if(error)throw error;return 'updated';}
-    const {error}=await sb.from('accounts').insert({phone:p,password_hash:hash,role,student_id:sid||null});if(error)throw error;return 'created';},
+  // 해시는 서버에서 계산한다. 평문 비밀번호는 HTTPS 본문으로만 전달된다.
+  async changeMyPassword(newPassword){if(DEMO)return 'demo';
+    const r=await apiFetch('/api/accounts',{method:'POST',body:{action:'change_password',new_password:newPassword}});return r.result;},
+  async upsertAccount(phone,password,role,sid){if(DEMO)return 'demo';
+    const r=await apiFetch('/api/accounts',{method:'POST',body:{action:'upsert',phone:normPhone(phone),password,role,student_id:sid||null}});return r.result;},
+  async upsertReadinessSnapshot(rows){if(DEMO)return;
+    const {error}=await sb.from('readiness_snapshots').upsert(rows,{onConflict:'student_id,snap_date'});if(error)throw error;},
 };
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -700,19 +720,24 @@ function heatFromRecords(records){
 /* ═══════════════════════════════════════════════════════════════════
    인증 / 부트
    ═══════════════════════════════════════════════════════════════════ */
+// 세션: {token, role, student_id, phone, exp}. exp 는 JWT 규약대로 초 단위.
 function saveSession(s){localStorage.setItem(SESSION_KEY,JSON.stringify(s));}
-function loadSession(){try{const s=JSON.parse(localStorage.getItem(SESSION_KEY)||'null');if(s&&s.expires>Date.now())return s;}catch(e){}localStorage.removeItem(SESSION_KEY);return null;}
+function loadSession(){try{const s=JSON.parse(localStorage.getItem(SESSION_KEY)||'null');if(s&&s.token&&s.exp*1000>Date.now())return s;}catch(e){}localStorage.removeItem(SESSION_KEY);return null;}
 function clearSession(){localStorage.removeItem(SESSION_KEY);}
 
 async function doLogin(){
   const phone=normPhone($('loginPhone').value),pw=$('loginPw').value,err=$('loginErr');err.textContent='';
   if(!phone||!pw){err.textContent='전화번호와 비밀번호를 입력하세요.';return;}
+  if(DEMO){err.textContent='데모 모드에서는 로그인할 수 없습니다.';return;} // 데모는 서버 함수를 호출하지 않는다
   $('loginBtn').disabled=true;$('loginBtn').textContent='확인 중...';
   try{
-    const acc=await db.getAccountByPhone(phone);const hash=await hashPassword(phone,pw);
-    if(!acc||acc.password_hash!==hash){err.textContent='전화번호 또는 비밀번호가 올바르지 않습니다.';}
-    else{session={account_id:acc.id,role:acc.role,student_id:acc.student_id||null,expires:Date.now()+SESSION_DAYS*864e5};
-      saveSession(session);await enterApp(acc.role,acc.student_id);}
+    // 해시 대조는 서버(/api/login)에서 한다. 비밀번호 해시는 브라우저로 내려오지 않는다.
+    const res=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({phone,password:pw})});
+    let data=null;try{data=await res.json();}catch(e){}
+    if(!res.ok){err.textContent=(data&&data.error)||'로그인에 실패했습니다.';}
+    else{session={token:data.token,role:data.role,student_id:data.student_id||null,phone:data.phone,exp:data.exp};
+      saveSession(session);await enterApp(data.role,data.student_id);}
   }catch(e){err.textContent='로그인 오류: '+(e?.message||'네트워크 확인');}
   finally{$('loginBtn').disabled=false;$('loginBtn').textContent='로그인';}
 }
@@ -803,6 +828,16 @@ function bindStudentSelector(re){const s=$('stuSel');if(s)s.addEventListener('ch
 /* ═══════════════════════════════════════════════════════════════════
    1) 대시보드 (올인원)
    ═══════════════════════════════════════════════════════════════════ */
+/* 준비도 추이를 하루 1행으로 적재한다(관리자·비데모 한정).
+   화면 렌더를 막지 않도록 await 하지 않으며, 실패해도 콘솔 기록만 남긴다. */
+function saveReadinessSnapshots(rows){
+  if(DEMO||cur.role!=='admin')return;
+  const snaps=rows.filter(r=>r.readiness!=null).map(r=>({
+    student_id:r.st.id,snap_date:todayStr(),readiness:r1(r.readiness),
+    meta:{last_pct:r.lastPct==null?null:r1(r.lastPct),weak_unit:r.weak?r.weak.unit:null,weak_cognition:r.weak?r.weak.cognition:null}}));
+  if(!snaps.length)return;
+  db.upsertReadinessSnapshot(snaps).catch(e=>console.error('준비도 스냅샷 적재',e));
+}
 async function renderDashboard(c){
   const ctx=await loadContext();
   const active=ctx.students.filter(s=>s.status==='재원'||!s.status);
@@ -833,6 +868,7 @@ async function renderDashboard(c){
     const uni=t1?ctx.universities.find(u=>u.id===t1.university_id):null;
     rows.push({st,readiness,lastPct,delta,weak,entered,uni,lastCounsel:lastCounselBy[st.id]||null});
   }
+  saveReadinessSnapshots(rows);
   // KPI
   const avgLatest=(()=>{if(!latest)return null;let e=0,p=0;const qids=ctx.questions.filter(q=>q.session_id===latest.id);
     // 반평균 = 최근회차 학생 평균 점수%
@@ -999,7 +1035,7 @@ async function createAcct(card,sid,role,m){
   if(!phone){m.className='msg err';m.textContent='전화번호를 입력하세요.';return;}
   if(!pw||pw.length<4){m.className='msg err';m.textContent='비밀번호는 4자 이상.';return;}
   if(DEMO){m.className='msg ok';m.textContent='데모 모드에서는 계정이 저장되지 않습니다.';return;}
-  try{const hash=await hashPassword(phone,pw);const res=await db.upsertAccount(phone,hash,role,sid);
+  try{const res=await db.upsertAccount(phone,pw,role,sid);
     m.className='msg ok';m.textContent=(role==='student'?'학생':'학부모')+' 계정 '+(res==='created'?'생성됨':'비번 변경됨');}
   catch(e){m.className='msg err';m.textContent='실패: '+(e?.message||'오류');}
 }
@@ -1649,15 +1685,32 @@ async function renderSettings(c){
       <div class="kv"><span>학생(student)</span><span>내 리포트·진단·첨삭·목표 대학(읽기)</span></div>
       <div class="kv"><span>학부모(parent)</span><span>자녀 주간 리포트(모바일 단일 페이지)</span></div>
       <p class="muted" style="font-size:12px;margin-top:10px">학생·학부모 계정은 [학생 관리]의 각 학생 카드에서 생성합니다.</p>${accountsNote}</div>
+    <div class="card"><h3>${svg('clipboardCheck')}DB 마이그레이션 상태</h3>
+      <div id="mig_box"><p class="muted" style="font-size:12.5px">확인 중...</p></div></div>
     <div class="card"><h3>${svg('file')}데이터 관리</h3>
       <p class="muted" style="font-size:12.5px">데이터는 Supabase에 저장됩니다. 백업은 Supabase 대시보드에서 관리하세요. 보안 한계는 README_설치가이드.md를 참고하세요.</p></div>`;
+  fillMigrationStatus();
   $('pw_save').addEventListener('click',async()=>{const m=$('pw_msg');m.className='msg';m.textContent='';
     const np=$('pw_new').value;if(!np||np.length<4){m.className='msg err';m.textContent='4자 이상 입력하세요.';return;}
     if(DEMO){m.className='msg ok';m.textContent='데모 모드에서는 변경되지 않습니다.';return;}
-    try{const {data:acc,error}=await sb.from('accounts').select('phone').eq('id',session.account_id).single();if(error)throw error;
-      const hash=await hashPassword(acc.phone,np);await db.updateAccountPassword(session.account_id,hash);
+    try{await db.changeMyPassword(np);
       m.className='msg ok';m.textContent='변경되었습니다.';$('pw_new').value='';}
     catch(e){m.className='msg err';m.textContent='실패: '+(e?.message||'오류');}});
+}
+// 설정 화면의 마이그레이션 카드만 비동기로 채운다(렌더 흐름을 막지 않음).
+async function fillMigrationStatus(){
+  const put=html=>{const b=$('mig_box');if(b)b.innerHTML=html;};
+  if(DEMO){put('<span class="chip gray">데모 모드 — 확인 안 함</span>');return;}
+  let applied;
+  try{const {data,error}=await sb.from('schema_migrations').select('version');if(error)throw error;
+    applied=(data||[]).map(r=>r.version);}
+  catch(e){console.error('마이그레이션 상태 조회',e);
+    put('<span class="chip red">확인 실패</span><p class="muted" style="font-size:12.5px;margin-top:8px">마이그레이션 추적 테이블 없음 — db/migrations/0002_migration_tracking.sql 실행 필요</p>');return;}
+  const missing=EXPECTED_MIGRATIONS.filter(v=>!applied.includes(v));
+  if(!missing.length){put('<span class="chip green">최신 상태</span><p class="muted" style="font-size:12.5px;margin-top:8px">적용됨 '+applied.length+'건</p>');return;}
+  put('<span class="chip amber">미적용 '+missing.length+'건</span>'
+    +'<p class="muted" style="font-size:12.5px;margin:8px 0">아래 파일을 Supabase SQL 에디터에서 번호 순서대로 실행하세요.</p>'
+    +missing.map(v=>`<div class="kv"><span>db/migrations/${esc(v)}.sql</span><span>미적용</span></div>`).join(''));
 }
 
 /* ═══════════ 학생: 목표 대학 ═══════════ */
@@ -1727,6 +1780,8 @@ async function renderParent(){
 }
 
 /* ═══════════ 해시 생성기 ═══════════ */
+/* 최초 관리자 계정을 SQL로 수동 발급할 때만 쓰는 도구(?hashgen=1).
+   Phase 3에서 Supabase Auth·bcrypt로 전환하면서 제거 예정. */
 function initHashgen(){
   $('loginView').style.display='none';$('appView').style.display='none';$('hashgenView').style.display='block';
   $('hgIcon').innerHTML=svg('settings');

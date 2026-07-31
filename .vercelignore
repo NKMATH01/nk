@@ -2,4 +2,5 @@
 *.pdf
 PRD_*.md
 docs/
+db/
 .git
