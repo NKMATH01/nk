@@ -8,6 +8,10 @@
      grading-photos (기본)
        admin           : 전체 허용
        student/parent  : 경로가 자기 student_id 에 속할 때만 허용
+     answer-sheets
+       grading-photos 와 같은 규칙(학생 본인 + 관리자). 학생이 올린 답안 원본이라
+       소유자가 경로 최상위에 그대로 들어 있어 아래 pathStudentId 로 판별된다.
+       이 버킷을 열지 않으면 AI 전사가 실패한 제출물은 사람이 영영 확인할 수 없다.
      problem-images
        admin 전용. 기출 원문 저작권 통제 때문에 학생·학부모는 아예 차단한다.
      counseling-audio
@@ -29,6 +33,7 @@ const DEFAULT_BUCKET = "grading-photos";
 // 허용 목록 방식 — 여기 없는 버킷 이름은 거부한다(임의 버킷 열람 방지).
 const BUCKETS = {
   "grading-photos": { adminOnly: false },
+  "answer-sheets": { adminOnly: false },
   "problem-images": { adminOnly: true },
   "counseling-audio": { adminOnly: true },
 };

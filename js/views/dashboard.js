@@ -47,7 +47,7 @@ async function renderDashboard(c){
     // 목표 1지망
     const t1=ctx.targets.filter(t=>t.student_id===st.id).sort((a,b)=>a.priority-b.priority)[0];
     const uni=t1?ctx.universities.find(u=>u.id===t1.university_id):null;
-    rows.push({st,readiness,coverage,records:b.questionRecords,lastPct,delta,weak,entered,uni,lastCounsel:lastCounselBy[st.id]||null});
+    rows.push({st,readiness,coverage,records:b.questionRecords,scores:b.scores,lastPct,delta,weak,entered,uni,lastCounsel:lastCounselBy[st.id]||null});
   }
   saveReadinessSnapshots(rows);
   // 진행 중 처방 — 배정 이후 회차로 개선 여부 자동 판정
@@ -117,8 +117,54 @@ async function renderDashboard(c){
     </tr></thead><tbody>${rxRows}</tbody></table></div>`
     :'<p class="muted">진행 중인 처방이 없습니다. [취약 진단]에서 배정하세요.</p>'}</div>`;
 
-  c.innerHTML=kpi+'<div style="height:16px"></div>'+`<div class="grid2" style="grid-template-columns:1.7fr 1fr">${tbl}${sched}</div>`+rxCard;
+  /* 미채점 제출 (관리자 전용).
+     학생이 답안을 올려도 강사가 그 사실을 알 방법이 없어, AI 채점이 대부분의 주에
+     아예 실행되지 않았다. 새 조회는 submissions 하나뿐이고 나머지는 이미 읽어 둔
+     ctx.questions·각 학생 scores 로 프런트에서 조인한다(마이그레이션 0건).
+     ★ renderDashboard 에는 역할 가드가 없어 학생도 이 화면에 들어올 수 있다.
+       submissions 는 전체 학생 것이므로 반드시 관리자일 때만 조회·표시한다. */
+  const ungradedCard=app.cur.role==='admin'?await ungradedCardHTML(ctx,rows,nameById):'';
+
+  c.innerHTML=kpi+'<div style="height:16px"></div>'+`<div class="grid2" style="grid-template-columns:1.7fr 1fr">${tbl}${sched}</div>`+ungradedCard+rxCard;
   c.querySelectorAll('tr[data-sid]').forEach(tr=>tr.addEventListener('click',()=>{app.cur.studentId=tr.dataset.sid;app.navigate('diagnosis');}));
+  // 미채점 제출 행 → 해당 회차의 채점 그리드로. 라우팅 관례는 renderSessions 의 [문항/채점] 버튼과 같다.
+  c.querySelectorAll('tr[data-goq]').forEach(tr=>tr.addEventListener('click',()=>{
+    app.cur.studentId=tr.dataset.goStudent;
+    app.testUI.sessionId=tr.dataset.goq;app.testUI.step=3;app.navigate('tests');}));
+}
+
+/* 미채점 제출 카드.
+   대상 = submissions 중 같은 (question_id, student_id) 의 scores.earned 가 없는 것.
+   태그만 붙고 점수가 없는 행(api/grade-review.js 의 tags_only 경로)도 미채점으로 본다 —
+   강사가 아직 점수를 확정하지 않았다는 뜻이므로 목록에 남아 있어야 한다.
+   재원 학생만 본다: rows 가 재원 학생 것이라, 그 밖의 학생은 채점 여부를 판정할 근거가 없다. */
+async function ungradedCardHTML(ctx,rows,nameById){
+  let subs=[];
+  try{subs=await db.listSubmissions(null,null);}catch(e){subs=[];}
+  const qById={};ctx.questions.forEach(q=>qById[q.id]=q);
+  const sessById={};ctx.sessions.forEach(s=>sessById[s.id]=s);
+  const scored={};rows.forEach(r=>(r.scores||[]).forEach(s=>{if(s.earned!=null)scored[s.question_id+'|'+s.student_id]=1;}));
+  // 회차를 못 찾으면 이동할 곳이 없으므로 목록에서 뺀다(정상 데이터에서는 생기지 않는다).
+  const pend=subs
+    .filter(s=>nameById[s.student_id]&&qById[s.question_id]
+      &&sessById[qById[s.question_id].session_id]
+      &&!scored[s.question_id+'|'+s.student_id])
+    .map(s=>{const q=qById[s.question_id],ss=sessById[q.session_id];
+      return {sub:s,q,ss,elapsed:-(daysUntil(fmtDate(s.submitted_at))||0)};})
+    .sort((a,b)=>b.elapsed-a.elapsed);   // 오래 방치된 것부터
+
+  const body=pend.length?`<div style="overflow-x:auto"><table><thead><tr>
+      <th>학생</th><th>문항</th><th>제출일</th><th class="num">경과</th>
+    </tr></thead><tbody>
+    ${pend.slice(0,20).map(p=>`<tr data-goq="${esc(p.ss.id)}" data-go-student="${esc(p.sub.student_id)}" style="cursor:pointer">
+      <td><b>${esc(nameById[p.sub.student_id])}</b></td>
+      <td>${esc(p.ss.week_no)}주차 ${esc(p.q.no)}번 <span class="muted">${esc(p.q.unit||'')}</span></td>
+      <td class="muted">${esc(fmtDate(p.sub.submitted_at))}</td>
+      <td class="num"><span class="chip ${p.elapsed>=7?'red':(p.elapsed>=3?'amber':'gray')}">${p.elapsed}일</span></td>
+    </tr>`).join('')}
+    </tbody></table></div>${pend.length>20?`<p class="muted" style="font-size:11.5px;margin-top:6px">외 ${pend.length-20}건</p>`:''}`
+    :'<p class="muted">미채점 제출이 없습니다.</p>';
+  return `<div class="card"><h3>${svg('clock')}미채점 제출 <span class="sub">학생이 올린 답안 중 아직 점수가 확정되지 않은 것 · 행 클릭 시 채점 그리드로 이동</span></h3>${body}</div>`;
 }
 
 export { saveReadinessSnapshots, renderDashboard };

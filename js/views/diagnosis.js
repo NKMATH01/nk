@@ -49,8 +49,12 @@ async function renderDiagnosis(c){
   const rxList=await db.listPrescriptions(sid);
   const rxCard=rxCardHTML(rxList,b.questionRecords,isAdmin);
 
+  // 표본이 없을 때의 안내는 역할마다 다르다 — 학생에게 없는 화면([주간테스트])을 안내하면 안 된다.
+  const noReasonMsg=isAdmin
+    ?'<p class="muted">기록된 오답원인이 없습니다. [주간테스트] 채점 그리드에서 문항별 태그 버튼(🏷)으로 입력하면 자동 집계됩니다.</p>'
+    :'<p class="muted">아직 기록된 오답원인이 없습니다. 주간테스트 채점이 끝나면 여기에 표시됩니다.</p>';
   const reasonBars=reasonTotal?WRONG_REASONS.map(r=>{const pct=Math.round(reasonCount[r]/reasonTotal*100);
-    return `<div class="hbar-row"><span>${esc(r)}</span><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:var(--red)"></div></div><span class="num">${pct}%</span></div>`;}).join(''):'<p class="muted">기록된 오답원인이 없습니다. [주간테스트] 채점 그리드에서 문항별 태그 버튼(🏷)으로 입력하면 자동 집계됩니다.</p>';
+    return `<div class="hbar-row"><span>${esc(r)}</span><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:var(--red)"></div></div><span class="num">${pct}%</span></div>`;}).join(''):noReasonMsg;
 
   c.innerHTML=await studentSelector()+`
     <div class="card"><h3>${svg('activity')}단원 × 사고과정 히트맵 <span class="sub">최근 3회 가중(50/30/20%) · 득점/배점 기반</span></h3>${heatTable}

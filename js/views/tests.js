@@ -414,7 +414,9 @@ function openTagMenu(td,dedItems){
         }catch(e){m.className='tm_msg msg err';m.textContent='사진 업로드 실패: '+(e?.message||'오류');return;}
       }
     }
-    try{await db.saveScores([{question_id:td.dataset.q,student_id:td.dataset.s,earned,wrong_reason:selTag||null,reason_note:note,photo_url:photoUrl,deduction_checks:dedSaved}]);
+    // note_source='teacher' — 이 경로의 메모는 전부 강사가 직접 친 것이다(빈 값이면 "메모 없음"이 강사 판단).
+    // AI few-shot 이 자기 출력을 되먹임하지 않도록 출처를 남긴다(0017).
+    try{await db.saveScores([{question_id:td.dataset.q,student_id:td.dataset.s,earned,wrong_reason:selTag||null,reason_note:note,note_source:'teacher',photo_url:photoUrl,deduction_checks:dedSaved}]);
       td.dataset.tag=selTag||'';td.dataset.note=note||'';td.dataset.photo=photoUrl||'';td.dataset.ded=dedSaved?JSON.stringify(dedSaved):'';
       let dot=td.querySelector('.tagdot');const hasMark=selTag||note||photoUrl;
       if(hasMark){if(!dot){dot=document.createElement('span');dot.className='tagdot';td.appendChild(dot);}dot.title=selTag||'메모/사진';}
@@ -462,11 +464,23 @@ async function initAiSection(panel,td,markTag){
     return;
   }
 
+  /* 제출 원본 썸네일. AI 전사가 실패해도 강사가 답안을 직접 볼 수 있어야 한다 —
+     전사 정확도를 검증할 방법이 없는 채로 AI 판단에 기대면 안 된다.
+     서명 URL 은 hydrateSignedPhotos 가 채운다(버킷만 answer-sheets 로 지정). */
+  const paths=Array.isArray(sub.image_paths)?sub.image_paths:[];
+  const photos=paths.length
+    ?'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">'
+      +paths.map(p=>`<span data-photo-path="${esc(p)}" data-photo-bucket="answer-sheets" data-photo-height="130"><span class="muted" style="font-size:11px">사진 불러오는 중...</span></span>`).join('')
+      +'</div>'
+    :(sub.answer_text?'<div class="muted" style="font-size:11.5px;margin-top:4px">직접 입력한 답안입니다(사진 없음).</div>':'');
+
   set(modeChip+' <span class="muted" style="font-size:11px">제출 '+esc(fmtDate(sub.submitted_at))+'</span>'
+    +photos
     +'<div style="margin-top:6px"><button type="button" class="btn line sm ai_run" data-stage="transcribe">1. 답안 전사</button> '
     +'<button type="button" class="btn line sm ai_run" data-stage="grade">2. 감점 분석</button></div>'
     +(sub.ocr_text?'<div class="muted" style="font-size:11.5px;margin-top:4px">전사 결과가 이미 있습니다(재실행 시 갱신).</div>':'')
     +'<div class="ai_out" style="margin-top:6px"></div>');
+  hydrateSignedPhotos(panel);   // 답안 원본도 private 버킷이라 서명 URL 이 필요하다
 
   panel.querySelectorAll('.ai_run').forEach(btn=>btn.addEventListener('click',async()=>{
     const out=panel.querySelector('.ai_out');
@@ -513,7 +527,7 @@ function renderAiResult(out,run,stage,td,markTag){
     +(rb.evidence?'<div class="muted" style="font-size:11px;margin-top:4px">근거: '+esc(rb.evidence)+'</div>':'')
     +(run.confidence!=null?'<div class="muted" style="font-size:11px;margin-top:2px">확신도 '+Math.round(run.confidence*100)+'%</div>':'')
     +'<div style="margin-top:6px"><button type="button" class="btn sm ai_apply">이 제안 반영</button>'
-    +' <span class="muted" style="font-size:11px">누르기 전에는 아무것도 저장되지 않습니다</span></div>'
+    +' <span class="muted" style="font-size:11px">누르기 전에는 아무것도 저장되지 않습니다 · 반영해도 강사 메모는 덮어쓰지 않습니다</span></div>'
     +'<div class="ai_apply_msg msg"></div></div>';
 
   out.querySelector('.ai_apply')?.addEventListener('click',async()=>{
@@ -521,12 +535,20 @@ function renderAiResult(out,run,stage,td,markTag){
     const inp=td.querySelector('input');
     const scoreVal=run.suggested_score!=null?Number(run.suggested_score):(inp.value===''?null:Number(inp.value));
     try{
-      await db.submitGradeReview({grading_run_id:run.id,final_score:scoreVal,
+      // final_comment 는 grading_reviews 에만 남는다 — scores.reason_note 는 건드리지 않는다(api/grade-review.js).
+      const r=await db.submitGradeReview({grading_run_id:run.id,final_score:scoreVal,
         final_tags:tags,final_comment:run.feedback_text||null});
       // 화면에도 즉시 반영(서버는 scores 에 이미 기록됨)
       if(scoreVal!=null){inp.value=String(scoreVal);inp.dispatchEvent(new Event('input',{bubbles:true}));}
       if(tags.length)markTag(tags[0]);
-      m.className='msg ok';m.textContent='확정되어 채점에 반영되었습니다.';
+      // 무엇이 저장됐는지 정확히 알린다 — tags_only 모드에서는 점수가 없어도 태그는 들어간다.
+      const saved=[];
+      if(r&&r.wrote_score)saved.push('점수 '+scoreVal);
+      if(r&&r.wrote_tags)saved.push('오답원인 '+tags[0]);
+      m.className=saved.length?'msg ok':'msg';
+      m.textContent=saved.length
+        ?('채점에 반영: '+saved.join(' · ')+' (강사 메모는 그대로)')
+        :'반영할 점수·태그가 없어 채점에는 저장하지 않았습니다(AI 확정 기록만 남습니다).';
     }catch(e){m.className='msg err';m.textContent='반영 실패: '+(e?.message||'오류');}
   });
 }

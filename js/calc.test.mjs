@@ -255,6 +255,19 @@ t('배정 이후 회차만 집계한다', () => {
   near(cellRateSince(rec, '삼각함수', '활용', '2026-06-15'), 90);
   near(cellRateSince(rec, '삼각함수', '활용', null), 55);   // 전체
 });
+t('배정일과 같은 날짜의 회차는 재측정 표본에서 제외한다', () => {
+  // 경계가 >= 였을 때는 배정 당일 회차가 재측정에 섞였다. 처방은 그 회차 결과를 보고
+  // 배정되므로 기준선과 재측정이 같은 표본을 공유해 개선이 구조적으로 과소평가된다.
+  const rec = [
+    { unit: '미분', cognition: '활용', points: 10, earned: 2, date: '2026-07-01' },  // 배정 당일 = 처방의 근거
+    { unit: '미분', cognition: '활용', points: 10, earned: 9, date: '2026-07-08' },  // 배정 이후
+  ];
+  near(cellRateSince(rec, '미분', '활용', '2026-07-01'), 90);   // 90 (당일 회차 제외), >= 였다면 55
+});
+t('배정일 이후 회차가 하나도 없으면 재측정 없음(null)', () => {
+  const rec = [{ unit: '미분', cognition: '활용', points: 10, earned: 2, date: '2026-07-01' }];
+  assert.equal(cellRateSince(rec, '미분', '활용', '2026-07-01'), null);
+});
 t('해당 셀 데이터가 없으면 null', () => {
   assert.equal(cellRateSince([], '미분', '개념', null), null);
   assert.equal(cellRateSince([{ unit: '미분', cognition: '개념', points: 0, earned: 0, date: '2026-07-01' }], '미분', '개념', null), null);

@@ -104,10 +104,14 @@ function standardizeWeekly(sessArr,stats){
 /* ── 처방-재측정 판정 ── */
 const PRESCRIPTION_DELTA=5;   // %p. 이보다 작은 변화는 측정 잡음으로 본다.
 
-// 배정 이후 실시된 회차만 모아 해당 단원×사고과정 정답률을 낸다. 데이터 없으면 null.
+/* 배정 이후 실시된 회차만 모아 해당 단원×사고과정 정답률을 낸다. 데이터 없으면 null.
+
+   경계는 **초과(>)** 다. 같은 날짜의 회차는 재측정 표본에서 뺀다 —
+   처방은 그 회차 결과를 보고 배정되므로, 취약을 만들어 낸 바로 그 회차가
+   재측정에 섞이면 개선을 구조적으로 과소평가한다(기준선과 재측정이 같은 표본을 공유). */
 function cellRateSince(records,unit,cognition,sinceDate){
   const rs=(records||[]).filter(r=>r.unit===unit&&r.cognition===cognition
-    &&(!sinceDate||(r.date&&String(r.date)>=String(sinceDate))));
+    &&(!sinceDate||(r.date&&String(r.date)>String(sinceDate))));
   const pts=rs.reduce((s,r)=>s+(Number(r.points)||0),0);
   if(!pts)return null;
   return rs.reduce((s,r)=>s+(Number(r.earned)||0),0)/pts*100;

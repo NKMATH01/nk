@@ -1,11 +1,11 @@
 /* 진행 현황 리포트 */
-import { cellRateSince, computeReadiness, heatFromRecords, hwAccuracyAvg, hwTimeAvg, judgePrescription } from '../calc.js';
+import { cellRateSince, computeReadiness, heatFromRecords, hwAccuracyAvg, hwTimeAvg, judgePrescription, shortfallContribution } from '../calc.js';
 import { COGNITIONS, TODAY, UNITS } from '../config.js';
 import { db, loadContext, studentBundle } from '../db.js';
 import { svg } from '../icons.js';
 import { app } from '../state.js';
 import { bindStudentSelector, studentSelector } from '../ui.js';
-import { $, esc, r1, todayStr } from '../util.js';
+import { $, daysUntil, ddayLabel, esc, fmtDate, r1, todayStr } from '../util.js';
 
 /* ═══════════════════════════════════════════════════════════════════
    7) 주간 리포트 (+인쇄)
@@ -36,6 +36,27 @@ async function renderReport(c){
   const heat=heatFromRecords(b.questionRecords);let weakCells=0;UNITS.forEach(u=>COGNITIONS.forEach(cg=>{if(heat[u][cg].rate!=null&&heat[u][cg].rate<40)weakCells++;}));
   // 단원별 정답률
   const unitAgg={};UNITS.forEach(u=>unitAgg[u]={e:0,p:0});b.questionRecords.forEach(r=>{unitAgg[r.unit].e+=r.earned;unitAgg[r.unit].p+=r.points;});
+
+  /* [다음 단계 안내] 이 화면이 이미 계산·조회해 둔 것만 쓴다(추가 조회 0).
+     취약 1순위(shortfallContribution) · 진행 중 처방(rxAll) · 다음 회차 D-day(ctx.sessions).
+     없는 것은 없다고 쓴다 — 모든 학생이 같은 문장을 보는 하드코딩 안내로 되돌리지 마라. */
+  const totPts=b.questionRecords.reduce((s,r)=>s+r.points,0)||1;
+  const ptsByCell={};b.questionRecords.forEach(r=>{const k=r.unit+'|'+r.cognition;ptsByCell[k]=(ptsByCell[k]||0)+r.points;});
+  const cells=[];UNITS.forEach(u=>COGNITIONS.forEach(cg=>{const h=heat[u][cg];
+    if(h.rate!=null)cells.push({unit:u,cognition:cg,rate:h.rate,pointShare:(ptsByCell[u+'|'+cg]||0)/totPts});}));
+  const weak=shortfallContribution(cells)[0];
+  const rxActive=rxAll.filter(p=>p.status==='active');
+  const nextSess=(ctx.sessions||[]).filter(s=>s.exam_date&&daysUntil(fmtDate(s.exam_date))>=0)
+    .sort((a,b)=>daysUntil(fmtDate(a.exam_date))-daysUntil(fmtDate(b.exam_date)))[0];
+  const nextSteps=`<div>${weak
+      ? `<b>보완 1순위</b> · ${esc(weak.unit)} · ${esc(weak.cognition)} <span class="muted">최근 3회 가중 정답률 ${Math.round(weak.rate)}%</span>`
+      : '<b>보완 1순위</b> · 순위를 낼 채점 표본이 아직 없습니다.'}</div>
+    <div style="margin-top:6px"><b>진행 중 보완 과제</b>${rxActive.length?` ${rxActive.length}건`:''}</div>
+    ${rxActive.length?rxActive.map(p=>`<div style="font-size:12.5px">· ${esc(p.unit)} · ${esc(p.cognition)}${p.note?' — '+esc(p.note):''}${p.due_date?` <span class="muted">기한 ${esc(fmtDate(p.due_date))}</span>`:''}</div>`).join('')
+      :'<div style="font-size:12.5px">· 현재 배정된 보완 과제가 없습니다.</div>'}
+    <div style="margin-top:6px">${nextSess
+      ? `<b>다음 주간테스트</b> · ${esc(nextSess.week_no)}주차 ${esc(fmtDate(nextSess.exam_date))} <span class="chip blue">${ddayLabel(fmtDate(nextSess.exam_date))}</span>`
+      : '<b>다음 주간테스트</b> · 예정된 회차가 아직 등록되지 않았습니다.'}</div>`;
   // 강사 코멘트(전체)
   const comments=await db.listTeacherComments(sid);
   const curComment=comments.find(t=>t.week_no===0);
@@ -71,7 +92,7 @@ async function renderReport(c){
         <div style="margin-top:10px">${pastList}</div>
       </div>
       <div style="margin-top:14px"><h3 style="font-size:13px">다음 단계 안내</h3>
-        <div class="note-blue">취약 단원 집중 보완과 첨삭 서술 근거 정교화를 진행합니다. 자세한 사항은 담당 강사 코멘트를 참고하세요.</div></div>
+        <div class="note-blue">${nextSteps}</div></div>
       <div class="divider"></div>
       <p class="muted" style="font-size:11px">본 리포트는 학습 관리용 참고 자료이며 합격을 보장하지 않습니다. · 생성일 ${todayStr()}</p>
     </div>`;

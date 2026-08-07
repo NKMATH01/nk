@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════
    POST /api/grade-review
      { grading_run_id, final_score, final_tags, final_comment }   (admin 전용)
-     →  { review, wrote_score }
+     →  { review, wrote_score, wrote_tags }
 
    강사 확정 지점. **AI 값이 scores 로 넘어가는 유일한 경로**이며,
    반드시 사람이 이 엔드포인트를 호출해야만 반영된다.
@@ -78,24 +78,40 @@ module.exports = async function handler(req, res){
     const review = Array.isArray(revRows) && revRows.length ? revRows[0] : null;
 
     /* scores 로 write-through.
-       기존 채점 그리드가 읽는 바로 그 테이블이라, 확정 즉시 모든 화면에 반영된다. */
-    let wroteScore = false;
-    if(finalScore != null){
+       기존 채점 그리드가 읽는 바로 그 테이블이라, 확정 즉시 모든 화면에 반영된다.
+
+       ★ reason_note 를 여기서 쓰지 않는다.
+         호출부가 final_comment 로 넘기는 값은 AI 가 쓴 문장(run.feedback_text)이다.
+         그것을 scores.reason_note 에 넣으면 강사가 감점 패널에 직접 적어 둔 메모가
+         AI 문장으로 덮이고, 그 문장이 다음 채점의 "강사메모" few-shot 으로 되돌아와
+         AI 가 자기 출력을 학습한다(api/grade-run.js fewShotExamples).
+         AI 문장은 위 grading_reviews.final_comment 에만 남긴다.
+
+       ★ 점수가 없어도 태그는 확정한다.
+         tags_only 모드는 suggested_score 가 아예 오지 않는다. 점수를 조건으로 걸면
+         강사가 [반영]을 눌러도 태그까지 함께 버려져 아무것도 저장되지 않았다.
+         점수가 null 이면 payload 에서 earned 를 빼서 기존 점수를 null 로 덮지 않고
+         wrong_reason 만 기록한다(PostgREST 는 payload 에 있는 컬럼만 갱신한다). */
+    const writeRow = {
+      question_id: sub.question_id,
+      student_id: sub.student_id,
+      wrong_reason: finalTags.length ? finalTags[0] : null,
+    };
+    if(finalScore != null) writeRow.earned = finalScore;
+    let wroteScore = false, wroteTags = false;
+    if(finalScore != null || finalTags.length){
       await L.sbRest("scores?on_conflict=question_id,student_id", {
         method: "POST",
-        body: [{
-          question_id: sub.question_id,
-          student_id: sub.student_id,
-          earned: finalScore,
-          wrong_reason: finalTags.length ? finalTags[0] : null,
-          reason_note: body.final_comment || null,
-        }],
+        body: [writeRow],
         headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
       });
-      wroteScore = true;
+      wroteScore = finalScore != null;
+      wroteTags = finalTags.length > 0;
     }
 
-    return L.sendJson(res, 200, { review: review, wrote_score: wroteScore, agreed: agreed });
+    return L.sendJson(res, 200, {
+      review: review, wrote_score: wroteScore, wrote_tags: wroteTags, agreed: agreed,
+    });
   }catch(e){
     return L.sendError(res, e, "채점 확정 중 오류가 발생했습니다.");
   }

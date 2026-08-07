@@ -74,9 +74,9 @@ async function renderEssays(c){
       ${e.comment?`<div class="muted" style="font-size:12.5px;margin-top:8px;padding:8px;background:var(--bg);border-radius:8px">${esc(e.comment)}</div>`:''}</div>`;}).join(''):'<p class="muted">첨삭 기록이 없습니다.</p>';
 
   let wrongCard='';
-  let ctx=null;   // 오답노트와 답안 제출 카드가 같은 컨텍스트를 공유한다(조회 1회)
+  let ctx=null,bundle=null;   // 오답노트와 답안 제출 카드가 같은 컨텍스트·번들을 공유한다(조회 1회)
   if(readonly){
-    ctx=await loadContext();const b=await studentBundle(sid,ctx);
+    ctx=await loadContext();const b=bundle=await studentBundle(sid,ctx);
     const maxByWeek={};b.perSession.forEach(s=>{maxByWeek[s.week||0]=(s.total||s.pts||0);});
     const byWeek={};b.questionRecords.forEach(r=>{const w=r.week||0;(byWeek[w]=byWeek[w]||[]).push(r);});
     const wks=Object.keys(byWeek).map(Number).sort((a,b)=>b-a);
@@ -97,7 +97,7 @@ async function renderEssays(c){
   }
 
   // 학생 답안 제출: 본인 문항에 사진만 올린다. AI 결과는 여기 표시하지 않는다(RLS 로도 차단).
-  const submitCard=readonly?await studentSubmitCardHTML(sid,ctx):'';
+  const submitCard=readonly?await studentSubmitCardHTML(sid,ctx,bundle):'';
 
   c.innerHTML=await studentSelector()+form+`<div class="card"><h3>${svg('clock')}첨삭 이력 (최신순)</h3>${timeline}</div>`+wrongCard+submitCard;
   hydrateSignedPhotos(c);   // private 버킷이라 서명 URL 을 받아 채운다
@@ -185,8 +185,13 @@ function itemsHTML(items){
 
    학생은 사진을 올리기만 한다. AI 분석 실행도, 결과 열람도 학생 몫이 아니다
    (grading_runs 는 RLS 로 관리자 전용 — 확정 전 제안이 새면 안 되므로).
+
+   제출 목록에는 **강사가 확정한 scores 값만** 붙인다. 미확정 AI 제안은
+   여기에 한 글자도 나오지 않는다 — bundle.questionRecords 는 scores 에서
+   만들어진 것이라 grading_runs 를 아예 거치지 않는다.
+   조인은 question_id 로 하고 추가 조회는 하지 않는다(bundle·ctx 를 넘겨받는다).
    ═══════════════════════════════════════════════════════════════════ */
-async function studentSubmitCardHTML(sid,ctx){
+async function studentSubmitCardHTML(sid,ctx,bundle){
   const sessions=(ctx.sessions||[]).slice().sort((a,b)=>b.week_no-a.week_no);
   const qs=(ctx.questions||[]);
   const sessById={};sessions.forEach(s=>sessById[s.id]=s);
@@ -198,11 +203,37 @@ async function studentSubmitCardHTML(sid,ctx){
     .map(q=>{const s=sessById[q.session_id];
       return `<option value="${esc(q.id)}">${esc(s.week_no)}주차 ${esc(q.no)}번 · ${esc(q.unit||'')}</option>`;}).join('');
 
+  // 채점 결과(확정본)를 question_id 로 찾을 수 있게 색인해 둔다.
+  // recByQ 는 배점·오답원인·강사메모, rawByQ 는 득점의 null 여부(0 점과 미채점을 구분).
+  const recByQ={},rawByQ={};
+  (bundle&&bundle.questionRecords||[]).forEach(r=>{if(r.question_id)recByQ[r.question_id]=r;});
+  (bundle&&bundle.scores||[]).forEach(s=>{rawByQ[s.question_id]=s;});
+
   let mine=[];
   try{mine=await db.listSubmissions(sid,null);}catch(e){}
   const list=mine.length?mine.slice(0,5).map(s=>{
     const q=qs.find(x=>x.id===s.question_id);const ss=q?sessById[q.session_id]:null;
-    return `<div class="kv"><span>${ss?esc(ss.week_no)+'주차 ':''}${q?esc(q.no)+'번':'문항'}</span><span class="muted">${esc(fmtDate(s.submitted_at))} 제출</span></div>`;
+    const title=(ss?esc(ss.week_no)+'주차 ':'')+(q?esc(q.no)+'번':'문항')+(q&&q.unit?' · '+esc(q.unit):'');
+    const paths=Array.isArray(s.image_paths)?s.image_paths:[];
+    const photos=paths.length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+      ${paths.map(p=>`<span data-photo-path="${esc(p)}" data-photo-bucket="answer-sheets" data-photo-height="110"><span class="muted" style="font-size:11px">사진 불러오는 중...</span></span>`).join('')}</div>`:'';
+    const rec=recByQ[s.question_id],raw=rawByQ[s.question_id];
+    const scored=!!(raw&&raw.earned!=null);
+    let status;
+    if(!rec){
+      status='<span class="chip gray">확인 대기</span>';
+    }else{
+      status=(scored?`<span class="chip ${rec.earned>=rec.points?'green':'blue'}">${rec.earned}/${rec.points}점</span>`
+                    :'<span class="chip gray">점수 확인 중</span>')
+        +(rec.wrong_reason?` <span class="chip amber">${esc(rec.wrong_reason)}</span>`:'')
+        +(rec.reason_note?`<div class="muted" style="font-size:12.5px;margin-top:6px;padding:8px;background:var(--bg);border-radius:8px">${esc(rec.reason_note)}</div>`:'');
+    }
+    return `<div class="timeline-item" style="padding:10px;margin-bottom:8px">
+      <div class="th" style="margin-bottom:0"><div style="font-size:13px"><b>${title}</b></div>
+        <div class="muted" style="font-size:11.5px">${esc(fmtDate(s.submitted_at))} 제출</div></div>
+      ${photos}
+      <div style="margin-top:6px">${status}</div>
+    </div>`;
   }).join(''):'<p class="muted" style="font-size:12.5px">아직 제출한 답안이 없습니다.</p>';
 
   return `<div class="card"><h3>${svg('pen')}내 답안 제출 <span class="sub">사진을 올리면 선생님이 확인합니다</span></h3>
@@ -213,7 +244,7 @@ async function studentSubmitCardHTML(sid,ctx){
       <div id="sub_msg" class="msg"></div>`
       :'<p class="muted">아직 등록된 문항이 없습니다.</p>'}
     <div class="divider"></div>
-    <div class="muted" style="font-size:12px;font-weight:700;margin-bottom:4px">최근 제출</div>
+    <div class="muted" style="font-size:12px;font-weight:700;margin-bottom:4px">최근 제출 · 채점 결과</div>
     ${list}</div>`;
 }
 

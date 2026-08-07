@@ -34,13 +34,23 @@ async function patchRun(id, patch){
 }
 
 /* 같은 단원에서 강사가 이미 확정한 사례를 few-shot 으로 준다.
-   모델이 우리 학원 채점 습관에 맞춰지도록 하는 것이 목적이다. */
+   모델이 우리 학원 채점 습관에 맞춰지도록 하는 것이 목적이다.
+
+   note_source 필터가 있는 이유
+     예시를 "강사메모"라는 이름표로 넣기 때문에, AI 가 쓴 문장이 여기 섞이면
+     모델이 자기 출력을 학습하고 일치율이 자기충족적으로 오른다(0017 참고).
+     null 은 **버리지 않고 포함한다** — 0017 이전 행은 출처를 구분할 수 없고
+     그 대부분은 정상적인 강사 메모다. 전부 버리면 few-shot 이 통째로 비어
+     품질이 오히려 떨어진다. 확실히 AI 유래인 것(ai_applied)만 제외한다.
+     `not.eq` 는 SQL 3값 논리 때문에 null 까지 함께 떨어뜨리므로 or 로 쓴다. */
 async function fewShotExamples(unit, cognition){
   try{
     const rows = await L.sbRest(
       "scores?select=wrong_reason,reason_note,earned,question_id!inner(unit,cognition,points)" +
       "&question_id.unit=eq." + L.eqParam(unit || "") +
-      "&wrong_reason=not.is.null&reason_note=not.is.null&limit=10&order=id.desc"
+      "&wrong_reason=not.is.null&reason_note=not.is.null" +
+      "&or=(note_source.is.null,note_source.eq.teacher)" +
+      "&limit=10&order=id.desc"
     );
     if(!Array.isArray(rows) || !rows.length) return "";
     return rows.slice(0, 10).map((r, i) =>
