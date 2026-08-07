@@ -10,6 +10,9 @@
        student/parent  : 경로가 자기 student_id 에 속할 때만 허용
      problem-images
        admin 전용. 기출 원문 저작권 통제 때문에 학생·학부모는 아예 차단한다.
+     counseling-audio
+       admin 전용. 상담 녹음에는 제3자 이야기와 미확정 판단이 섞여 있어
+       학생·학부모에게는 어떤 경우에도 열어 주지 않는다.
 
    경로 규칙
      신규 업로드  <student_id>/<question_id>_<timestamp>.<ext>
@@ -27,6 +30,7 @@ const DEFAULT_BUCKET = "grading-photos";
 const BUCKETS = {
   "grading-photos": { adminOnly: false },
   "problem-images": { adminOnly: true },
+  "counseling-audio": { adminOnly: true },
 };
 const EXPIRES_IN = 600;   // 10분
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

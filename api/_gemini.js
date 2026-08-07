@@ -18,6 +18,8 @@
 const L = require("./_lib.js");
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models/";
+const FILES_BASE = "https://generativelanguage.googleapis.com/v1beta/files";
+const FILES_UPLOAD_URL = "https://generativelanguage.googleapis.com/upload/v1beta/files";
 const DEFAULT_MODEL = "gemini-3.6-flash";
 const DEFAULT_PRICE_IN = 1.50;    // USD per 1M input tokens
 const DEFAULT_PRICE_OUT = 7.50;   // USD per 1M output tokens
@@ -44,7 +46,9 @@ function estimateCost(tokensIn, tokensOut){
 }
 
 /* Gemini generateContent 호출.
-   parts: [{text}] 또는 [{inlineData:{mimeType,data}}] 배열
+   parts: [{text}] / [{inlineData:{mimeType,data}}] / [{fileData:{mimeType,fileUri}}] 배열
+          (fileData 는 uploadFile() 로 올린 파일을 URI 로 참조하는 형태다.
+           parts 는 body 에 그대로 실리므로 이 함수는 형태를 따로 구분하지 않는다.)
    opts : { schema, maxOutputTokens, temperature, systemInstruction }
 
    반환
@@ -137,6 +141,153 @@ async function callGemini(parts, opts){
   return { ok: true, json, text: out, codeOutput, tokensIn, tokensOut, costUsd, model: model(), raw: data };
 }
 
+/* ── Files API ──
+   인라인(base64)으로 싣기엔 큰 파일을 올리고 URI 로 참조한다.
+   반환한 fileUri 를 callGemini 의 parts 에 {fileData:{mimeType,fileUri}} 로 넣으면 된다.
+
+   ⚠️ **이 경로는 실호출로 검증되지 않았다.** 작성 시점에 이 저장소에는
+      GEMINI_API_KEY 가 없어 요청을 실제로 보내 볼 수 없었다. 엔드포인트·헤더
+      이름·응답 필드는 구글 문서 규격대로 썼으나, 실제 응답이 다를 가능성에 대비해
+      실패 시 응답 본문 앞부분을 console.error 로 남긴다(키는 절대 로그에 남기지 않는다).
+      첫 실사용 때 로그를 보고 맞춰야 한다.
+
+   업로드 절차(resumable)
+     ① POST /upload/v1beta/files
+        X-Goog-Upload-Protocol: resumable / X-Goog-Upload-Command: start
+        X-Goog-Upload-Header-Content-Length / -Content-Type
+        → 응답 헤더 X-Goog-Upload-URL 에 실제 업로드 주소가 온다
+     ② POST <그 주소>
+        X-Goog-Upload-Command: upload, finalize / X-Goog-Upload-Offset: 0 + 바이트
+        → { file: { uri, name, state, ... } }
+     ③ state 가 PROCESSING 이면 ACTIVE 가 될 때까지 폴링(최대 60초, 2초 간격)
+
+   반환 { fileUri, mimeType, name } */
+const FILE_POLL_INTERVAL_MS = 2000;
+const FILE_POLL_TIMEOUT_MS = 60000;
+
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+async function uploadFile(buffer, mimeType, displayName){
+  if(!hasKey()){
+    const e = new Error("AI 기능이 설정되지 않았습니다. 관리자에게 GEMINI_API_KEY 등록을 요청하세요.");
+    e.statusCode = 503;
+    e.publicMessage = "AI 기능 미설정";
+    e.aiUnconfigured = true;
+    throw e;
+  }
+  const key = process.env.GEMINI_API_KEY;
+  const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+  const mime = mimeType || "application/octet-stream";
+
+  // ① 업로드 세션 시작
+  let start;
+  try{
+    start = await fetch(FILES_UPLOAD_URL, {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": key,
+        "X-Goog-Upload-Protocol": "resumable",
+        "X-Goog-Upload-Command": "start",
+        "X-Goog-Upload-Header-Content-Length": String(bytes.length),
+        "X-Goog-Upload-Header-Content-Type": mime,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ file: { display_name: displayName || "upload" } }),
+    });
+  }catch(e){
+    console.error("[gemini/files] start network", e && e.message);
+    throw L.fail(502, "AI 서버에 파일을 올리지 못했습니다.");
+  }
+  if(!start.ok){
+    const t = await start.text().catch(() => "");
+    console.error("[gemini/files] start", start.status, t.slice(0, 500));
+    if(start.status === 429) throw L.fail(429, "AI 요청이 한도를 초과했습니다. 잠시 후 다시 시도하세요.");
+    if(start.status === 403) throw L.fail(502, "AI 키가 거부되었습니다. 키·결제 설정을 확인하세요.");
+    throw L.fail(502, "AI 서버에 파일 업로드를 시작하지 못했습니다.");
+  }
+  const uploadUrl = start.headers.get("x-goog-upload-url") || start.headers.get("X-Goog-Upload-URL");
+  if(!uploadUrl){
+    console.error("[gemini/files] start 응답에 업로드 URL 헤더가 없다");
+    throw L.fail(502, "AI 서버가 업로드 주소를 주지 않았습니다.");
+  }
+
+  // ② 바이트 전송 + finalize
+  let up;
+  try{
+    up = await fetch(uploadUrl, {
+      method: "POST",
+      headers: {
+        "Content-Length": String(bytes.length),
+        "X-Goog-Upload-Offset": "0",
+        "X-Goog-Upload-Command": "upload, finalize",
+      },
+      body: bytes,
+    });
+  }catch(e){
+    console.error("[gemini/files] upload network", e && e.message);
+    throw L.fail(502, "AI 서버로 파일을 전송하지 못했습니다.");
+  }
+  const upText = await up.text();
+  if(!up.ok){
+    console.error("[gemini/files] upload", up.status, upText.slice(0, 500));
+    throw L.fail(502, "AI 서버로 파일을 전송하지 못했습니다.");
+  }
+  let upJson;
+  try{ upJson = JSON.parse(upText); }
+  catch(e){
+    console.error("[gemini/files] upload 응답 파싱 실패:", upText.slice(0, 300));
+    throw L.fail(502, "AI 서버의 업로드 응답을 해석하지 못했습니다.");
+  }
+  let file = upJson.file || upJson;
+  if(!file || !file.uri){
+    console.error("[gemini/files] 업로드 응답에 uri 가 없다:", upText.slice(0, 300));
+    throw L.fail(502, "AI 서버가 파일 주소를 주지 않았습니다.");
+  }
+
+  // ③ 처리 대기. name 은 "files/xxxx" 형태로 온다.
+  const name = file.name || "";
+  const firstUri = file.uri;   // 폴링 응답에 uri 가 빠져 오더라도 참조는 유지한다
+  const deadline = Date.now() + FILE_POLL_TIMEOUT_MS;
+  while(file.state === "PROCESSING"){
+    if(!name){
+      console.error("[gemini/files] PROCESSING 인데 name 이 없어 폴링할 수 없다");
+      throw L.fail(502, "AI 서버의 파일 처리 상태를 확인할 수 없습니다.");
+    }
+    if(Date.now() >= deadline){
+      throw L.fail(504, "AI 서버가 녹음 파일을 처리하지 못했습니다(대기 시간 초과). 잠시 후 다시 시도하세요.");
+    }
+    await sleep(FILE_POLL_INTERVAL_MS);
+    let poll;
+    try{
+      // name 이 "files/xxx" 이므로 앞의 files/ 를 중복시키지 않는다.
+      const path = name.indexOf("files/") === 0 ? name.slice("files/".length) : name;
+      poll = await fetch(FILES_BASE + "/" + encodeURIComponent(path), {
+        method: "GET", headers: { "x-goog-api-key": key },
+      });
+    }catch(e){
+      console.error("[gemini/files] poll network", e && e.message);
+      throw L.fail(502, "AI 서버의 파일 처리 상태를 확인하지 못했습니다.");
+    }
+    const pollText = await poll.text();
+    if(!poll.ok){
+      console.error("[gemini/files] poll", poll.status, pollText.slice(0, 500));
+      throw L.fail(502, "AI 서버의 파일 처리 상태를 확인하지 못했습니다.");
+    }
+    try{ file = JSON.parse(pollText); }
+    catch(e){
+      console.error("[gemini/files] poll 응답 파싱 실패:", pollText.slice(0, 300));
+      throw L.fail(502, "AI 서버의 파일 처리 응답을 해석하지 못했습니다.");
+    }
+    if(file && file.file) file = file.file;   // 응답이 한 겹 감싸여 오는 경우 대비
+  }
+  if(file.state === "FAILED"){
+    console.error("[gemini/files] state FAILED:", JSON.stringify(file.error || {}).slice(0, 300));
+    throw L.fail(502, "AI 서버가 녹음 파일을 처리하지 못했습니다. 파일 형식을 확인하세요.");
+  }
+
+  return { fileUri: file.uri || firstUri, mimeType: file.mimeType || mime, name: file.name || name };
+}
+
 /* ── responseSchema 조립 ── */
 
 // 전사: 정답을 주지 않는다. 답안에 적힌 것만 그대로 옮기게 한다.
@@ -185,7 +336,7 @@ function buildGradeSchema(tagEnum, withScore){
 }
 
 module.exports = {
-  callGemini, hasKey, model, gradingMode, estimateCost,
+  callGemini, uploadFile, hasKey, model, gradingMode, estimateCost,
   priceIn, priceOut, PROMPT_VERSION,
   TRANSCRIBE_SCHEMA, buildGradeSchema,
 };

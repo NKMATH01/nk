@@ -117,16 +117,34 @@ const db={
     const {error}=await app.sb.from('homework_records').insert(h);if(error)throw error;},
   async deleteHomework(id){if(app.DEMO){app.store.homework_records=app.store.homework_records.filter(h=>h.id!==id);return;}
     const {error}=await app.sb.from('homework_records').delete().eq('id',id);if(error)throw error;},
+  // 관리자 전용. select('*') 라 transcript·ai_draft·audio_path 까지 전부 돌아온다.
+  // 학생·학부모 화면에서는 절대 쓰지 말 것 — 아래 listStudentCounseling 을 쓴다.
   async listCounseling(sid){if(app.DEMO)return app.store.counseling_notes.filter(n=>n.student_id===sid).slice().sort((a,b)=>a.note_date<b.note_date?1:-1);
     return await sbq(app.sb.from('counseling_notes').select('*').eq('student_id',sid).order('note_date',{ascending:false}),'상담 기록 조회',[]);},
+  /* 학생·학부모 경로 전용.
+     ★ 여기를 select('*') 로 되돌리지 마라. counseling_notes 의 학생용 RLS(stu_self)는
+       **행 단위**라 컬럼을 가려 주지 못한다. 0015 로 생긴 transcript(전사문 원문)·
+       ai_draft(미확정 AI 초안)·audio_path 가 그대로 학생 응답에 실려 나간다.
+       공개 여부 필터도 서버(PostgREST) 쪽에 건다 — 클라이언트 filter 는 응답이
+       이미 브라우저에 도착한 뒤라 유출을 막지 못한다. */
+  async listStudentCounseling(sid){
+    const COLS='id,note_date,category,content,follow_up,visible_to_student';
+    if(app.DEMO)return app.store.counseling_notes.filter(n=>n.student_id===sid&&n.visible_to_student)
+      .map(n=>Object.fromEntries(COLS.split(',').map(k=>[k,n[k]]))).sort((a,b)=>a.note_date<b.note_date?1:-1);
+    return await sbq(app.sb.from('counseling_notes').select(COLS).eq('student_id',sid)
+      .eq('visible_to_student',true).order('note_date',{ascending:false}),'상담 기록 조회',[]);},
   async listAllCounseling(){if(app.DEMO)return app.store.counseling_notes.slice();
     return await sbq(app.sb.from('counseling_notes').select('*'),'상담 기록 조회',[]);},
-  async insertCounseling(n){if(app.DEMO){app.store.counseling_notes.push(Object.assign({id:uuid(),created_at:todayStr()},n));return;}
-    const {error}=await app.sb.from('counseling_notes').insert(n);if(error)throw error;},
+  // 삽입 결과의 id 를 돌려준다 — 녹음 업로드가 저장 경로(<sid>/<note_id>_...)에 쓴다.
+  async insertCounseling(n){if(app.DEMO){const o=Object.assign({id:uuid(),created_at:todayStr()},n);app.store.counseling_notes.push(o);return o;}
+    const {data,error}=await app.sb.from('counseling_notes').insert(n).select().single();if(error)throw error;return data;},
   async updateCounseling(id,patch){if(app.DEMO){const o=app.store.counseling_notes.find(x=>x.id===id);Object.assign(o,patch);return;}
     const {error}=await app.sb.from('counseling_notes').update(patch).eq('id',id);if(error)throw error;},
   async deleteCounseling(id){if(app.DEMO){app.store.counseling_notes=app.store.counseling_notes.filter(n=>n.id!==id);return;}
     const {error}=await app.sb.from('counseling_notes').delete().eq('id',id);if(error)throw error;},
+  // 상담 녹음 전사. 길이에 따라 수 분 걸린다(vercel.json 에서 300초까지 허용).
+  async transcribeCounseling(noteId){if(app.DEMO)throw new Error('데모 모드에서는 전사를 실행하지 않습니다.');
+    return await apiFetch('/api/counsel-transcribe',{method:'POST',body:{note_id:noteId}});},
   async insertEssay(e){if(app.DEMO){app.store.essay_gradings.push(Object.assign({id:uuid(),created_at:todayStr()},e));return;}
     const {error}=await app.sb.from('essay_gradings').insert(e);if(error)throw error;},
   async updateEssay(id,patch){if(app.DEMO){const o=app.store.essay_gradings.find(x=>x.id===id);Object.assign(o,patch);return;}

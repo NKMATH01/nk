@@ -2,7 +2,14 @@
 import { db } from '../db.js';
 import { svg } from '../icons.js';
 import { app } from '../state.js';
-import { $, esc, normPhone } from '../util.js';
+import { $, esc, normPhone, todayStr } from '../util.js';
+
+/* 녹음 동의 체크를 켰는데 동의일이 비어 있으면 오늘 날짜를 채운다.
+   체크만 하고 날짜를 빠뜨리면 언제 받은 동의인지 나중에 확인할 수 없다. */
+function bindConsentDefault(chk,dateInput){
+  if(!chk||!dateInput)return;
+  chk.addEventListener('change',()=>{if(chk.checked&&!dateInput.value)dateInput.value=todayStr();});
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    2) 학생 관리
@@ -20,6 +27,7 @@ async function renderStudents(c){
       <div class="row" style="margin-top:10px">
         <div class="field"><label>학부모 연락처</label><input id="ns_pphone" placeholder="01000000000"></div>
         <div class="field"><label>개인정보 동의일</label><input id="ns_consent" type="date"></div>
+        <div class="field"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="ns_rec"> 녹음 동의</label><input id="ns_rec_at" type="date"></div>
         <div class="field"><label>상태</label><select id="ns_status"><option>재원</option><option>퇴원</option></select></div>
         <button class="btn" id="ns_add">${svg('plus','sm')}등록</button>
       </div>
@@ -31,11 +39,13 @@ async function renderStudents(c){
     const name=$('ns_name').value.trim();if(!name){m.className='msg err';m.textContent='이름을 입력하세요.';return;}
     const naesin=$('ns_naesin').value?Number($('ns_naesin').value):null;
     try{await db.insertStudent({name,grade_type:$('ns_grade').value,school:$('ns_school').value.trim()||null,
-      naesin_grade:naesin,parent_phone:normPhone($('ns_pphone').value)||null,consent_date:$('ns_consent').value||null,status:$('ns_status').value});
+      naesin_grade:naesin,parent_phone:normPhone($('ns_pphone').value)||null,consent_date:$('ns_consent').value||null,
+      recording_consent:$('ns_rec').checked,recording_consent_at:$('ns_rec_at').value||null,status:$('ns_status').value});
       m.className='msg ok';m.textContent='등록되었습니다.';renderStuCards(universities);
       ['ns_name','ns_school','ns_naesin','ns_pphone'].forEach(id=>$(id).value='');
     }catch(e){m.className='msg err';m.textContent='등록 실패: '+(e?.message||'오류');}
   });
+  bindConsentDefault($('ns_rec'),$('ns_rec_at'));
   renderStuCards(universities);
 }
 async function renderStuCards(universities,savedSid){
@@ -59,6 +69,7 @@ async function renderStuCards(universities,savedSid){
       <div class="row" style="margin-top:10px">
         <div class="field"><label>학부모 연락처</label><input class="e_pphone" value="${esc(s.parent_phone||'')}" placeholder="01000000000"></div>
         <div class="field"><label>개인정보 동의일</label><input class="e_consent" type="date" value="${esc(s.consent_date||'')}"></div>
+        <div class="field"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" class="e_rec" ${s.recording_consent?'checked':''}> 녹음 동의</label><input class="e_rec_at" type="date" value="${esc(s.recording_consent_at||'')}"></div>
         <div class="field"><label>상태</label><select class="e_status"><option ${s.status!=='퇴원'?'selected':''}>재원</option><option ${s.status==='퇴원'?'selected':''}>퇴원</option></select></div>
       </div>
       <div class="divider"></div>
@@ -100,11 +111,15 @@ async function renderStuCards(universities,savedSid){
       try{
         await db.updateStudent(sid,{name,grade_type:card.querySelector('.e_grade').value,school:card.querySelector('.e_school').value.trim()||null,
           naesin_grade:naesinV?Number(naesinV):null,parent_phone:normPhone(card.querySelector('.e_pphone').value)||null,
-          consent_date:card.querySelector('.e_consent').value||null,status:card.querySelector('.e_status').value});
+          consent_date:card.querySelector('.e_consent').value||null,
+          recording_consent:card.querySelector('.e_rec').checked,
+          recording_consent_at:card.querySelector('.e_rec_at').value||null,
+          status:card.querySelector('.e_status').value});
         await db.setTargets(sid,list);
         renderStuCards(universities,sid);
       }catch(e){m.className='msg err';m.textContent='저장 실패: '+(e?.message||'오류');}
     });
+    bindConsentDefault(card.querySelector('.e_rec'),card.querySelector('.e_rec_at'));
     const accMsg=card.querySelector('.acc_msg');
     card.querySelector('.acc_student').addEventListener('click',()=>createAcct(card,sid,'student',accMsg));
     card.querySelector('.acc_parent').addEventListener('click',()=>createAcct(card,sid,'parent',accMsg));

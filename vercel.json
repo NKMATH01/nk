@@ -1,0 +1,6 @@
+{
+  "functions": {
+    "api/counsel-transcribe.js": { "maxDuration": 300 },
+    "api/grade-run.js": { "maxDuration": 120 }
+  }
+}
