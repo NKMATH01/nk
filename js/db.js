@@ -64,6 +64,24 @@ async function apiFetch(path,options){
   return data||{};
 }
 
+/* counseling-audio 버킷에서 객체 하나를 지운다(0016 의 삭제 정책이 적용돼 있어야 한다).
+   실패하면 던진다 — 부르는 쪽은 이 결과를 확인하기 전에 audio_path 를 지우면 안 된다.
+
+   ★ error 만 보면 안 된다. remove() 는 **RLS 가 허용한 것만** 지우고 지워진 목록을
+     돌려준다. 삭제 정책이 없으면 아무것도 지우지 않은 채 error 없이 빈 배열이 온다 —
+     그대로 통과시키면 "지웠다고 믿는데 버킷에는 남아 있는" 바로 그 상태가 된다.
+     그래서 빈 결과도 실패로 본다.
+   그 대가로, 객체가 이미 없는 경로(부분 실패 후 재시도 등)도 실패로 잡힌다. 이 버킷에는
+   열람(select) 정책이 없어 "없는 것"과 "권한이 없는 것"을 클라이언트에서 구분할 수
+   없기 때문이다. 그 상태가 되면 [삭제]·[음성 삭제] 가 둘 다 막히므로(둘 다 이 함수를
+   거친다) 화면에서 풀 방법이 없다 — 0016 적용 여부를 먼저 확인하고, 정말 객체만
+   사라진 경우라면 Supabase 콘솔에서 audio_path 를 비워야 한다. 드문 경우로 본다. */
+async function removeCounselAudio(path){
+  const {data,error}=await app.sb.storage.from('counseling-audio').remove([path]);
+  if(error)throw error;
+  if(!data||!data.length)throw new Error('음성 파일을 지우지 못했습니다(대상 없음 또는 권한 없음). 마이그레이션 0016 이 적용되었는지 [설정] 화면의 DB 마이그레이션 상태에서 확인하세요.');
+}
+
 const db={
   async listStudents(){if(app.DEMO)return app.store.students.slice();return await sbq(app.sb.from('students').select('*').order('created_at'),'학생 조회',[]);},
   async listUniversities(){if(app.DEMO)return app.store.universities.slice();return await sbq(app.sb.from('universities').select('*').order('region').order('name'),'대학 조회',[]);},
@@ -133,15 +151,41 @@ const db={
       .map(n=>Object.fromEntries(COLS.split(',').map(k=>[k,n[k]]))).sort((a,b)=>a.note_date<b.note_date?1:-1);
     return await sbq(app.sb.from('counseling_notes').select(COLS).eq('student_id',sid)
       .eq('visible_to_student',true).order('note_date',{ascending:false}),'상담 기록 조회',[]);},
-  async listAllCounseling(){if(app.DEMO)return app.store.counseling_notes.slice();
-    return await sbq(app.sb.from('counseling_notes').select('*'),'상담 기록 조회',[]);},
+  /* 대시보드가 학생별 '최근 상담일' 하나만 쓴다(js/views/dashboard.js).
+     ★ select('*') 로 두지 마라. renderDashboard 에는 역할 가드가 없고 라우터 맵은
+       역할과 무관해, 학생이 dashboard 로 들어오기만 해도 transcript(전사문 원문)·
+       ai_draft·audio_path 가 응답에 실려 나간다. RLS 는 행 단위라 컬럼을 못 가린다.
+       쓰는 컬럼 3개로 좁혀 화면이 늘어나도 유출되지 않게 한다. */
+  async listAllCounseling(){
+    const COLS='id,student_id,note_date';
+    if(app.DEMO)return app.store.counseling_notes.map(n=>Object.fromEntries(COLS.split(',').map(k=>[k,n[k]])));
+    return await sbq(app.sb.from('counseling_notes').select(COLS),'상담 기록 조회',[]);},
   // 삽입 결과의 id 를 돌려준다 — 녹음 업로드가 저장 경로(<sid>/<note_id>_...)에 쓴다.
   async insertCounseling(n){if(app.DEMO){const o=Object.assign({id:uuid(),created_at:todayStr()},n);app.store.counseling_notes.push(o);return o;}
     const {data,error}=await app.sb.from('counseling_notes').insert(n).select().single();if(error)throw error;return data;},
   async updateCounseling(id,patch){if(app.DEMO){const o=app.store.counseling_notes.find(x=>x.id===id);Object.assign(o,patch);return;}
     const {error}=await app.sb.from('counseling_notes').update(patch).eq('id',id);if(error)throw error;},
+  /* 상담 기록 삭제 — **음성 원본을 먼저 지운다.**
+     버킷의 객체에 닿는 열쇠는 행의 audio_path 뿐이다. 행을 먼저 지우면 그 경로를
+     잃어, 버킷에 남은 미성년자 음성을 다시 찾아낼 방법이 없어진다(지운 줄 아는데
+     남아 있고, 남아 있다는 사실조차 시스템이 모른다).
+     그래서 순서를 조회 → Storage 삭제 → 행 삭제로 두고, **Storage 삭제가 실패하면
+     여기서 던져 행을 남긴다.** 경로가 남아 있으면 다시 시도할 수 있다.
+     (0016_counseling_audio_delete 의 삭제 정책이 적용돼 있어야 한다.) */
   async deleteCounseling(id){if(app.DEMO){app.store.counseling_notes=app.store.counseling_notes.filter(n=>n.id!==id);return;}
+    const cur=await app.sb.from('counseling_notes').select('audio_path').eq('id',id).maybeSingle();
+    if(cur.error)throw cur.error;
+    if(cur.data&&cur.data.audio_path)await removeCounselAudio(cur.data.audio_path);
     const {error}=await app.sb.from('counseling_notes').delete().eq('id',id);if(error)throw error;},
+  /* 음성만 지운다 — 전사문·확정 기록은 그대로 남긴다.
+     삭제 요구가 늘 기록 전체 삭제는 아니다. "녹음만 지워 달라"는 요구에 상담 기록까지
+     잃을 이유가 없다. 3차의 counsel-purge Cron 과 같은 처리를 사람이 손으로 하는 것이다. */
+  async purgeCounselingAudio(id,path){
+    if(app.DEMO){const o=app.store.counseling_notes.find(x=>x.id===id);
+      if(o){o.audio_path=null;o.audio_purged_at=new Date().toISOString();}return;}
+    await removeCounselAudio(path);   // 여기서 실패하면 audio_path 를 지우지 않는다(위와 같은 이유)
+    const {error}=await app.sb.from('counseling_notes')
+      .update({audio_path:null,audio_purged_at:new Date().toISOString()}).eq('id',id);if(error)throw error;},
   // 상담 녹음 전사. 길이에 따라 수 분 걸린다(vercel.json 에서 300초까지 허용).
   async transcribeCounseling(noteId){if(app.DEMO)throw new Error('데모 모드에서는 전사를 실행하지 않습니다.');
     return await apiFetch('/api/counsel-transcribe',{method:'POST',body:{note_id:noteId}});},

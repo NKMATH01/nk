@@ -131,7 +131,7 @@ async function renderCounseling(c){
 
   const timeline=notes.length?notes.map(n=>`<div class="timeline-item">
       <div class="th"><div><span class="chip ${COUNSEL_CLS[n.category]||'gray'}">${esc(n.category)}</span> <span class="muted" style="font-size:12px;margin-left:6px">${esc(fmtDate(n.note_date))}</span>${n.visible_to_student?' <span class="chip green">학생 공개</span>':''}${n.ai_status?' '+(AI_CHIP[n.ai_status]||''):''}${n.audio_path?' <span title="녹음 있음">🎧</span>':(n.audio_purged_at?' <span class="muted" style="font-size:11.5px">음성 삭제됨</span>':'')}</div>
-        <div><button class="btn line sm cn_edit" data-id="${esc(n.id)}">수정</button> <button class="btn danger sm cn_del" data-id="${esc(n.id)}">삭제</button></div></div>
+        <div><button class="btn line sm cn_edit" data-id="${esc(n.id)}">수정</button>${n.audio_path?` <button class="btn line sm cn_purge" data-id="${esc(n.id)}" title="음성 원본만 지웁니다. 전사문과 상담 기록은 남습니다.">음성 삭제 (되돌릴 수 없음)</button>`:''} <button class="btn danger sm cn_del" data-id="${esc(n.id)}">삭제</button></div></div>
       <div style="font-size:13.5px;white-space:pre-wrap;line-height:1.6">${esc(n.content)}</div>
       ${n.follow_up?`<div style="margin-top:8px;padding:8px 10px;background:var(--bg);border-radius:8px;font-size:12.5px"><b>후속 조치</b> · ${esc(n.follow_up)}</div>`:''}
       ${n.transcript?`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12.5px;font-weight:700">전사문 보기</summary>
@@ -199,11 +199,12 @@ async function renderCounseling(c){
   $('cu_again')?.addEventListener('click',()=>startRec(c,sid));
   $('cu_stop')?.addEventListener('click',stopRec);
   $('cu_drop')?.addEventListener('click',()=>{recDiscard();renderCounseling(c);});
-  $('cu_recgo')?.addEventListener('click',()=>{if(REC.blob)uploadAndTranscribe(c,sid,REC.blob,'webm',true);});
+  // stu 를 그대로 넘긴다 — uploadAndTranscribe 가 업로드 전에 녹음 동의를 다시 본다.
+  $('cu_recgo')?.addEventListener('click',()=>{if(REC.blob)uploadAndTranscribe(c,sid,stu,REC.blob,'webm',true);});
   $('cu_go')?.addEventListener('click',()=>{
     const f=$('cu_file').files[0];
     if(!f){const m=$('cu_msg');m.className='msg err';m.textContent='녹음 파일을 선택하세요.';return;}
-    uploadAndTranscribe(c,sid,f,(f.name.split('.').pop()||'m4a').toLowerCase(),false);
+    uploadAndTranscribe(c,sid,stu,f,(f.name.split('.').pop()||'m4a').toLowerCase(),false);
   });
   // m4a·mp4 는 실측에서 전사가 '[불명]' 으로 나왔다. 막지는 않는다(될 수도 있다) — 미리 알린다.
   $('cu_file')?.addEventListener('change',()=>{
@@ -218,6 +219,12 @@ async function renderCounseling(c){
     const content=$('cn_content').value.trim();
     if(!content){m.className='msg err';m.textContent='상담 내용을 입력하세요.';return;}
     const payload={note_date:$('cn_date').value,category:$('cn_cat').value,content,follow_up:$('cn_follow').value.trim()||null,visible_to_student:$('cn_visible').checked};
+    /* confirmed_at 은 30일 음성 자동 삭제(3차 counsel-purge)의 카운트 기준점이다.
+       조건 없이 일괄로 찍는다 — 녹음에서 온 행만 찍으면 '찍히지 않은 행'이 다시 생기고,
+       수기 기록은 audio_path 가 없어 애초에 purge 대상이 아니라 무해하다.
+       ★ 수정 저장 때는 이미 있는 값을 덮지 않는다. 기준은 **최초 확정 시각**이며,
+         수정할 때마다 뒤로 밀리면 30일이 영영 오지 않는다. */
+    if(!(editing&&editing.confirmed_at))payload.confirmed_at=new Date().toISOString();
     try{if(editing){await db.updateCounseling(editing.id,payload);app.counselEdit=null;}
       else{await db.insertCounseling(Object.assign({student_id:sid},payload));}
       m.className='msg ok';m.textContent='저장되었습니다.';renderCounseling(c);}
@@ -227,20 +234,37 @@ async function renderCounseling(c){
   c.querySelectorAll('.cn_edit').forEach(b=>b.addEventListener('click',()=>{app.counselEdit=b.dataset.id;renderCounseling(c);}));
   c.querySelectorAll('.cn_del').forEach(b=>b.addEventListener('click',async()=>{
     try{await db.deleteCounseling(b.dataset.id);if(app.counselEdit===b.dataset.id)app.counselEdit=null;renderCounseling(c);}catch(e){alert('삭제 실패: '+(e?.message||'오류'));}}));
+  /* [음성 삭제] — 음성 원본만 지우고 전사문·상담 기록은 남긴다.
+     삭제 요구가 늘 기록 전체 삭제는 아니다. "녹음만 지워 달라"는 요구에 상담 기록까지
+     잃을 이유가 없어 [삭제] 와 따로 둔다.
+     되돌릴 수 없지만 확인 모달은 띄우지 않는다 — 위 [삭제] 를 비롯한 기존 삭제 버튼이
+     모두 모달 없이 바로 실행한다. 대신 버튼 문구에 그 사실을 적어 둔다. */
+  c.querySelectorAll('.cn_purge').forEach(b=>b.addEventListener('click',async()=>{
+    const n=notes.find(x=>x.id===b.dataset.id);if(!n||!n.audio_path)return;
+    b.disabled=true;
+    try{await db.purgeCounselingAudio(n.id,n.audio_path);renderCounseling(c);}
+    catch(e){b.disabled=false;alert('음성 삭제 실패: '+(e?.message||'오류'));}}));
 }
 
 /* 녹음 업로드 → 전사. **파일 선택과 브라우저 녹음이 같은 함수를 쓴다** —
    기록 생성 → Storage 업로드 → audio_path 기록 → /api/counsel-transcribe 까지
    두 경로가 완전히 같아서 나눠 둘 이유가 없다.
+     stu    대상 학생 레코드 — 업로드 전에 녹음 동의를 다시 보는 데 쓴다
      blob   업로드할 File 또는 녹음 Blob
      ext    저장 경로 확장자(파일은 원본 확장자, 녹음은 항상 'webm')
      fromRec 녹음 경로인지 — 업로드가 끝난 뒤 미리듣기를 정리할지 판단한다
 
    ★ 어느 단계에서 실패해도 만들어진 행을 지우지 않는다. 강사가 그 행을 열어
      손으로 이어 쓸 수 있어야 한다(전사 실패가 상담 기록 소실이 되면 안 된다). */
-async function uploadAndTranscribe(c,sid,blob,ext,fromRec){
+async function uploadAndTranscribe(c,sid,stu,blob,ext,fromRec){
   const m=$('cu_msg');
   m.className='msg';m.textContent='';
+  /* ★ 동의 확인을 **업로드를 시작하기 전에** 한다.
+     서버(api/counsel-transcribe.js)도 다시 보지만 그쪽은 전사 진입 직전이라,
+     403 이 떨어지는 시점에는 음성이 이미 버킷에 들어가 있다. 버킷의 insert 정책도
+     is_admin() 만 볼 뿐 동의는 보지 않는다. 동의 없는 음성은 아예 올리지 않는다. */
+  if(!stu||!stu.recording_consent){m.className='msg err';
+    m.textContent='이 학생의 녹음 동의가 없습니다. [학생 관리] 화면에서 동의를 먼저 등록한 뒤 올려 주세요.';return;}
   if(!blob||!blob.size){m.className='msg err';m.textContent='올릴 녹음이 없습니다.';return;}
   if(blob.size>MAX_AUDIO_MB*1024*1024){
     m.className='msg err';
