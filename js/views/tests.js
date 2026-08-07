@@ -186,7 +186,8 @@ async function renderScoreGrid(body,c){
   const head=`<thead><tr><th class="corner">학생 \\ 문항</th>${questions.map(q=>`<th><span class="qno">${q.no}</span><span class="qmeta">${esc(q.unit.slice(0,4))}·${esc(q.cognition)}</span><span class="qmeta">${q.points}점</span></th>`).join('')}<th class="corner" style="left:auto;position:sticky;right:0">합계</th></tr></thead>`;
   const rowsHTML=students.map((st,ri)=>`<tr><th class="stu">${esc(st.name)}</th>${questions.map((q,ci)=>{
     const sc=scMap[q.id+'|'+st.id];const val=sc?sc.earned:'';const tag=sc&&sc.wrong_reason?sc.wrong_reason:'';const note=sc&&sc.reason_note?sc.reason_note:'';const photo=sc&&sc.photo_url?sc.photo_url:'';
-    return `<td class="scell" data-r="${ri}" data-c="${ci}" data-q="${esc(q.id)}" data-s="${esc(st.id)}" data-max="${q.points}" data-tag="${esc(tag)}" data-note="${esc(note)}" data-photo="${esc(photo)}">
+    const ded=sc&&sc.deduction_checks?JSON.stringify(sc.deduction_checks):'';   // 감점 체크 상태(셀 재편집 시 복원용)
+    return `<td class="scell" data-r="${ri}" data-c="${ci}" data-q="${esc(q.id)}" data-s="${esc(st.id)}" data-max="${q.points}" data-tag="${esc(tag)}" data-note="${esc(note)}" data-photo="${esc(photo)}" data-ded="${esc(ded)}">
       ${tag||note||photo?'<span class="tagdot" title="'+esc(tag||'메모/사진')+'"></span>':''}
       <input type="number" min="0" max="${q.points}" value="${val}" data-r="${ri}" data-c="${ci}">
       <button class="tagbtn" title="오답원인 태그">${svg('tag','xs')}</button></td>`;}).join('')}<td class="rowtot" data-rowtot="${ri}">0</td></tr>`).join('');
@@ -347,22 +348,44 @@ function openTagMenu(td,dedItems){
   panel.querySelectorAll('.tm_tag').forEach(b=>b.addEventListener('click',()=>markTag(b.dataset.r)));
 
   /* 감점 체크 → 득점 = 배점 - 체크된 감점 합계(0 미만 방지).
-     가장 큰 감점 항목의 태그를 오답원인으로 자동 제안한다(수동 변경 가능). */
-  function recalcDeduction(){
+     가장 큰 감점 항목의 태그를 오답원인으로 자동 제안한다(수동 변경 가능).
+     summaryOnly 는 저장된 체크 상태를 복원할 때만 쓴다 — 이미 저장된 득점·오답원인을
+     다시 계산해 덮어쓰면 안 되므로 요약 문구만 갱신한다. */
+  function recalcDeduction(summaryOnly){
     const chks=[...panel.querySelectorAll('.tm_dedchk:checked')];
     const sum=chks.reduce((s,c)=>s+(Number(c.dataset.pts)||0),0);
     const earned=Math.max(0,maxPts-sum);
-    const inp=td.querySelector('input');
-    inp.value=String(earned);
-    inp.dispatchEvent(new Event('input',{bubbles:true}));   // 행 합계·정답률 갱신
+    if(!summaryOnly){
+      const inp=td.querySelector('input');
+      inp.value=String(earned);
+      inp.dispatchEvent(new Event('input',{bubbles:true}));   // 행 합계·정답률 갱신
+    }
     const sumEl=panel.querySelector('.tm_dedsum');
     if(sumEl)sumEl.textContent=chks.length?('감점 '+sum+'점 → 득점 '+earned+' / '+maxPts):'체크한 감점 없음 → 만점 처리';
-    if(chks.length){
+    if(!summaryOnly&&chks.length){
       const top=chks.slice().sort((a,b)=>(Number(b.dataset.pts)||0)-(Number(a.dataset.pts)||0))[0];
       if(top&&top.dataset.tag)markTag(top.dataset.tag);
     }
   }
-  panel.querySelectorAll('.tm_dedchk').forEach(c=>c.addEventListener('change',recalcDeduction));
+  panel.querySelectorAll('.tm_dedchk').forEach(c=>c.addEventListener('change',()=>recalcDeduction()));
+
+  /* 저장된 감점 체크 상태 복원. label·points 가 모두 같은 **아직 짝짓지 않은**
+     첫 체크박스와 차례로 이어 붙인다(같은 라벨이 둘 이상일 때 중복 체크 방지).
+     매칭 실패한 항목은 조용히 무시한다 — 감점 항목이 나중에 편집된 경우다. */
+  (function restoreDedChecks(){
+    if(!items.length||!td.dataset.ded)return;
+    let saved=null;
+    try{saved=JSON.parse(td.dataset.ded);}catch(e){return;}
+    if(!Array.isArray(saved)||!saved.length)return;
+    const chks=[...panel.querySelectorAll('.tm_dedchk')];
+    saved.forEach(s=>{
+      if(!s)return;
+      const hit=chks.find(c=>{const d=items[Number(c.dataset.i)];
+        return !c.checked&&d&&d.label===s.label&&Number(d.points)===Number(s.points);});
+      if(hit)hit.checked=true;
+    });
+    recalcDeduction(true);
+  })();
 
   // AI 분석 섹션(관리자 전용). 키 미설정이면 버튼을 비활성화하고 이유를 보여준다.
   initAiSection(panel,td,markTag);
@@ -373,6 +396,9 @@ function openTagMenu(td,dedItems){
     const inp=td.querySelector('input');const v=inp.value;
     if(v===''||isNaN(Number(v))){m.className='tm_msg msg err';m.textContent='점수를 먼저 입력하세요.';return;}
     const earned=Number(v);const note=panel.querySelector('.tm_note').value.trim()||null;
+    // 체크된 감점 항목을 그대로 남긴다(다음에 셀을 열 때 복원). 체크가 없으면 null.
+    const dedChks=[...panel.querySelectorAll('.tm_dedchk:checked')];
+    const dedSaved=dedChks.length?dedChks.map(c=>({label:items[Number(c.dataset.i)].label,points:Number(c.dataset.pts)||0})):null;
     const file=panel.querySelector('.tm_file').files[0];
     let photoUrl=removePhoto?null:(curPhoto||null),demoPhoto=false;
     if(file){
@@ -388,8 +414,8 @@ function openTagMenu(td,dedItems){
         }catch(e){m.className='tm_msg msg err';m.textContent='사진 업로드 실패: '+(e?.message||'오류');return;}
       }
     }
-    try{await db.saveScores([{question_id:td.dataset.q,student_id:td.dataset.s,earned,wrong_reason:selTag||null,reason_note:note,photo_url:photoUrl}]);
-      td.dataset.tag=selTag||'';td.dataset.note=note||'';td.dataset.photo=photoUrl||'';
+    try{await db.saveScores([{question_id:td.dataset.q,student_id:td.dataset.s,earned,wrong_reason:selTag||null,reason_note:note,photo_url:photoUrl,deduction_checks:dedSaved}]);
+      td.dataset.tag=selTag||'';td.dataset.note=note||'';td.dataset.photo=photoUrl||'';td.dataset.ded=dedSaved?JSON.stringify(dedSaved):'';
       let dot=td.querySelector('.tagdot');const hasMark=selTag||note||photoUrl;
       if(hasMark){if(!dot){dot=document.createElement('span');dot.className='tagdot';td.appendChild(dot);}dot.title=selTag||'메모/사진';}
       else if(dot)dot.remove();

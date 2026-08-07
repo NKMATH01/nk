@@ -15,6 +15,9 @@
      신규 업로드  <student_id>/<question_id>_<timestamp>.<ext>
      레거시       q<question_id>_s<student_id>_<timestamp>.<ext>
    둘 다 학생 id 를 뽑아낼 수 있어야 하므로 아래 pathStudentId 가 양쪽을 처리한다.
+
+   토큰 검사는 서명만으로 끝내지 않는다 — 강제 로그아웃된 세션은 토큰이
+   만료 전이어도 거부한다(assertTokenFresh).
    ═══════════════════════════════════════════════════════════════════ */
 "use strict";
 const L = require("./_lib.js");
@@ -58,6 +61,7 @@ module.exports = async function handler(req, res){
     }
 
     const auth = L.requireAuth(req);
+    await L.assertTokenFresh(auth);
     const body = await L.readJsonBody(req);
     const path = normalizePath(body && body.path);
 

@@ -13,8 +13,6 @@ function todayStr(){const d=TODAY;return d.getFullYear()+'-'+pad(d.getMonth()+1)
 function fmtDate(s){return s?String(s).slice(0,10):'';}
 function daysUntil(s){if(!s)return null;const t=new Date(s+'T00:00:00');return Math.round((t-TODAY)/86400000);}
 function ddayLabel(s){const d=daysUntil(s);if(d==null)return '';return d>=0?'D-'+d:'D+'+(-d);}
-async function sha256Hex(str){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('');}
-async function hashPassword(phone,pw){return sha256Hex(normPhone(phone)+pw);}
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
 
-export { esc, $, clamp, r1, normPhone, uuid, pad, todayStr, fmtDate, daysUntil, ddayLabel, sha256Hex, hashPassword, mulberry32 };
+export { esc, $, clamp, r1, normPhone, uuid, pad, todayStr, fmtDate, daysUntil, ddayLabel, mulberry32 };

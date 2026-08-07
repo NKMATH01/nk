@@ -25,7 +25,7 @@ async function findByPhone(phone){
 }
 
 async function handleGet(req, res){
-  L.requireAdmin(req);
+  await L.assertTokenFresh(L.requireAdmin(req));
   const url = new URL(req.url, "http://localhost");
   const sid = url.searchParams.get("student_id");
   if(!sid || !UUID_RE.test(sid)) throw L.fail(400, "student_id(uuid)가 필요합니다.");
@@ -36,7 +36,7 @@ async function handleGet(req, res){
 }
 
 async function handleUpsert(req, res, body){
-  L.requireAdmin(req);
+  await L.assertTokenFresh(L.requireAdmin(req));
   const phone = L.normPhone(body.phone);
   const role = String(body.role || "");
   const sid = body.student_id ? String(body.student_id) : null;
@@ -85,6 +85,7 @@ async function handleUpsert(req, res, body){
 
 async function handleChangePassword(req, res, body){
   const auth = L.requireAuth(req); // 역할 제한 없음 — 단, 토큰의 sub 행만 건드린다.
+  await L.assertTokenFresh(auth);
   const np = body.new_password;
   if(typeof np !== "string" || np.length < MIN_PW){
     throw L.fail(400, "비밀번호는 " + MIN_PW + "자 이상이어야 합니다.");

@@ -186,6 +186,21 @@ function requireAdmin(req){
   return p;
 }
 
+/* 토큰의 tv 가 DB 의 현재 token_version 과 같은지 확인한다.
+   requireAuth 는 서명만 보므로, 강제 로그아웃(token_version+1)된 세션도
+   만료 전까지는 통과한다. 민감한 자료를 다루는 경로에서는 이 검사를 덧붙인다.
+   DB 왕복이 1회 늘어나므로 모든 경로에 붙이지는 않는다. */
+async function assertTokenFresh(auth){
+  const rows = await sbRest(
+    "accounts?id=eq." + eqParam(auth.sub) + "&select=id,token_version&limit=1"
+  );
+  const acc = Array.isArray(rows) && rows.length ? rows[0] : null;
+  if(!acc) throw fail(401, "계정을 찾을 수 없습니다. 다시 로그인하세요.");
+  const tv = acc.token_version == null ? 1 : Number(acc.token_version);
+  if(Number(auth.tv) !== tv) throw fail(401, "세션이 무효화되었습니다. 다시 로그인하세요.");
+  return auth;
+}
+
 /* ─── Supabase REST (service_role) ───
    service_role 키는 RLS 를 우회하므로 절대 클라이언트로 내보내지 않는다. */
 async function sbRest(path, options){
@@ -273,6 +288,6 @@ module.exports = {
   env, sendJson, sendError, fail, readJsonBody,
   normPhone, hashPassword, safeEqualHex,
   hashScrypt, verifyScrypt, verifyPassword,
-  signJwt, verifyJwt, requireAuth, requireAdmin, buildClaims,
+  signJwt, verifyJwt, requireAuth, requireAdmin, assertTokenFresh, buildClaims,
   sbRest, storageRest, storageDownload, eqParam,
 };

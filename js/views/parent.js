@@ -11,7 +11,7 @@ import { $, ddayLabel, esc, r1 } from '../util.js';
    학부모 화면 (모바일 단일 스크롤)
    ═══════════════════════════════════════════════════════════════════ */
 async function renderParent(){
-  $('loginView').style.display='none';$('appView').style.display='none';$('hashgenView').style.display='none';
+  $('loginView').style.display='none';$('appView').style.display='none';
   $('parentView').style.display='block';
   $('pTop').innerHTML=app.DEMO?demoSwitchHTML('parent'):`<button class="btn sm line" id="pLogout" style="color:#fff;border-color:#3a4152;background:transparent">로그아웃</button>`;
   if(app.DEMO)bindDemoSwitch();else $('pLogout')?.addEventListener('click',doLogout);

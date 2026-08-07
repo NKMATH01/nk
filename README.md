@@ -19,12 +19,14 @@
 | 파일 | 용도 |
 |------|------|
 | `index.html` | 앱 전체 (브라우저에서 실행) |
-| `supabase_setup.sql` | Supabase 테이블 생성 + 대학 시드 스크립트 |
+| `db/migrations/` | Supabase 스키마 마이그레이션 (0001 부터 번호순 실행) |
 | `README_설치가이드.md` | 원장·운영자용 설치·사용 가이드 |
 
 ## 설치
 
-설치·운영 방법은 **[README_설치가이드.md](README_설치가이드.md)** 를 참고하세요. (Supabase 무료 프로젝트 생성 → SQL 실행 → 관리자 계정 등록 → `index.html`에 접속 정보 연결)
+설치·운영 방법은 **[README_설치가이드.md](README_설치가이드.md)** 를 참고하세요. (Supabase 무료 프로젝트 생성 → `db/migrations/` 를 번호순 실행 → `index.html`에 접속 정보 연결)
+
+> ⚠️ `db/legacy/` 아래 파일은 실행하지 마세요. 상단 DROP 블록이 전체 데이터를 삭제합니다. 현행 스키마 기준은 `db/migrations/` 이며 규칙은 [db/migrations/README.md](db/migrations/README.md) 에 있습니다.
 
 ## 보안 안내
 

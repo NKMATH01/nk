@@ -12,7 +12,6 @@ import { renderCounseling, renderStudentCounsel } from './views/counseling.js';
 import { renderDashboard } from './views/dashboard.js';
 import { renderDiagnosis } from './views/diagnosis.js';
 import { renderEssays } from './views/essays.js';
-import { initHashgen } from './views/hashgen.js';
 import { renderHomeworkCheck } from './views/homework.js';
 import { renderParent } from './views/parent.js';
 import { renderProblems } from './views/problems.js';
@@ -55,7 +54,7 @@ function menuFor(role){return role==='student'?STUDENT_MENU:ADMIN_MENU;}
 
 async function enterApp(role,studentId){
   app.cur.role=role;app.cur.studentId=studentId||null;
-  $('loginView').style.display='none';$('hashgenView').style.display='none';
+  $('loginView').style.display='none';
   if(role==='parent'){await renderParent();return;}
   $('parentView').style.display='none';$('appView').style.display='block';
   $('demoStrip').style.display=app.DEMO?'block':'none';
@@ -126,7 +125,6 @@ $('sideBackdrop').addEventListener('click',()=>setSide(false));
 
 (async function boot(){
   const params=new URLSearchParams(location.search);
-  if(params.get('hashgen')==='1'){initHashgen();return;}
   if(!cdnLoaded()){$('cdnBanner').style.display='block';$('loginBtn').disabled=true;$('loginView').style.display='flex';return;}
   if(params.get('demo')==='1'){app.DEMO=true;app.store=buildDemoStore();await enterApp('admin',null);return;}
   $('loginView').style.display='flex';
