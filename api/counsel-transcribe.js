@@ -1,6 +1,8 @@
 /* ═══════════════════════════════════════════════════════════════════
    POST /api/counsel-transcribe   { note_id }   (admin 전용)
-     →  { ok, ai_status, transcript_len, tokens_in, tokens_out, cost_usd, upload_mode }
+     →  { ok, ai_status, transcript_len, tokens_in, tokens_out, cost_usd, upload_mode, mime_used }
+        인식 실패 시 ok:false · ai_status:'failed' · reason:'unintelligible' · message 가 더 붙는다.
+        mime_used 는 어떤 형식으로 Gemini 에 보냈는지다 — 실패 원인을 좁히는 데 쓴다.
 
    상담 녹음(counseling-audio 버킷)을 받아 **전사문만** 만든다.
    요약·유형 분류·후속 조치 초안은 2차(counsel-draft)라 여기서 하지 않는다.
@@ -89,6 +91,24 @@ function buildSystemInstruction(univNames){
   return lines.join("\n");
 }
 
+/* ★ 조용한 실패 차단.
+
+   실측(2026-08-07): 같은 음성을 m4a(AAC/MP4)로 올리면 Gemini 가 전사문 대신
+   '[불명]' 4자만 돌려준다. 같은 음성의 wav 는 345자, webm/opus 는 346자였다.
+   그런데 응답 자체는 정상이라 지금까지는 ai_status='transcribed' 로 기록되고
+   화면에도 "전사 완료" 로 표시됐다 — 강사는 전사가 됐다고 믿는다.
+
+   그래서 저장 전에 **실질 내용**을 센다. '[불명]' 표기와 공백을 걷어낸 길이다.
+   전사문이 '[불명]' 의 반복뿐이면 이 값이 0 에 수렴하므로 같은 자로 잡힌다.
+   10자 미만은 failed 로 본다 — "네 알겠습니다"(실질 6자) 같은 진짜 짧은 녹음도 여기
+   걸리지만, 그 정도 길이는 상담 기록으로 쓸 수 없고 **전사문을 함께 저장하므로**
+   강사가 열어 보면 무엇이 나왔는지 그대로 확인할 수 있다. 잃는 것은 없다. */
+const MIN_REAL_CHARS = 10;
+function realLen(t){ return String(t || "").replace(/\[불명\]/g, "").replace(/\s+/g, "").length; }
+const UNINTELLIGIBLE_MSG =
+  "오디오를 알아듣지 못했습니다. 형식이 지원되지 않거나 소리가 녹음되지 않았을 수 있습니다. "
+  + "wav·webm·mp3 형식을 권장합니다.";
+
 const TRANSCRIBE_PROMPT = [
   "이 오디오는 학원 강사와 학생(또는 학부모)의 상담 녹음이다.",
   "들린 그대로 한국어로 받아 적어라. 다음을 반드시 지켜라.",
@@ -161,21 +181,30 @@ module.exports = async function handler(req, res){
       return L.sendJson(res, 200, {
         ok: false, ai_status: "blocked", blocked: r.blocked, transcript_len: 0,
         tokens_in: r.tokensIn, tokens_out: r.tokensOut, cost_usd: r.costUsd,
-        upload_mode: uploadMode,
+        upload_mode: uploadMode, mime_used: f.mime,
       });
     }
 
     const transcript = (r.text || "").trim();
-    if(!transcript){
-      await patchNote(note.id, { ai_status: "failed" });
-      throw L.fail(502, "전사 결과가 비어 있습니다. 녹음 파일을 확인하고 다시 시도하세요.");
+    const real = realLen(transcript);
+
+    // 인식 실패. 차단과 마찬가지로 예외를 던지지 않고 **상태로** 남긴다(Phase 6 관례).
+    // 전사문도 함께 저장한다 — 강사가 무엇이 나왔는지 눈으로 봐야 원인을 좁힐 수 있다.
+    if(real < MIN_REAL_CHARS){
+      await patchNote(note.id, { transcript: transcript || null, ai_status: "failed" });
+      return L.sendJson(res, 200, {
+        ok: false, ai_status: "failed", reason: "unintelligible", message: UNINTELLIGIBLE_MSG,
+        transcript_len: transcript.length, real_len: real,
+        tokens_in: r.tokensIn, tokens_out: r.tokensOut, cost_usd: r.costUsd,
+        upload_mode: uploadMode, mime_used: f.mime,
+      });
     }
 
     await patchNote(note.id, { transcript: transcript, ai_status: "transcribed" });
     return L.sendJson(res, 200, {
       ok: true, ai_status: "transcribed", transcript_len: transcript.length,
       tokens_in: r.tokensIn, tokens_out: r.tokensOut, cost_usd: r.costUsd,
-      upload_mode: uploadMode,
+      upload_mode: uploadMode, mime_used: f.mime,
     });
   }catch(e){
     // 실패 사실을 행에 남긴다 — 강사가 이어받을 수 있어야 한다. 행은 지우지 않는다.
