@@ -18,6 +18,7 @@ export const app = {
   store: null,                           // 데모 모드 메모리 저장소
   testUI: { step: 1, sessionId: null },  // 주간테스트 화면 단계
   counselEdit: null,                     // 상담 기록 수정 중인 id
+  essayEdit: null,                       // 첨삭 기록 수정 중인 id
 
   enterApp: null,                        // main.js 가 주입
   navigate: null,                        // main.js 가 주입

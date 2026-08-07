@@ -1,7 +1,7 @@
 /* 데이터 접근 계층(데모=메모리 / 실서버=Supabase)과 집계 헬퍼.
    401 응답 시 호출하는 doLogout 은 순환 import 를 피하려고 app 을 경유한다. */
 import { app } from './state.js';
-import { cohortSessionStats, sessionPercentRows, standardizeWeekly } from './calc.js';
+import { cohortSessionStats, essayTotals, sessionPercentRows, standardizeWeekly } from './calc.js';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 import { $, clamp, normPhone, todayStr, uuid } from './util.js';
 
@@ -129,6 +129,10 @@ const db={
     const {error}=await app.sb.from('counseling_notes').delete().eq('id',id);if(error)throw error;},
   async insertEssay(e){if(app.DEMO){app.store.essay_gradings.push(Object.assign({id:uuid(),created_at:todayStr()},e));return;}
     const {error}=await app.sb.from('essay_gradings').insert(e);if(error)throw error;},
+  async updateEssay(id,patch){if(app.DEMO){const o=app.store.essay_gradings.find(x=>x.id===id);Object.assign(o,patch);return;}
+    const {error}=await app.sb.from('essay_gradings').update(patch).eq('id',id);if(error)throw error;},
+  async deleteEssay(id){if(app.DEMO){app.store.essay_gradings=app.store.essay_gradings.filter(e=>e.id!==id);return;}
+    const {error}=await app.sb.from('essay_gradings').delete().eq('id',id);if(error)throw error;},
   async saveTeacherComment(sid,weekNo,comment){
     if(app.DEMO){let o=app.store.teacher_comments.find(t=>t.student_id===sid&&t.week_no===weekNo);
       if(o)o.comment=comment;else app.store.teacher_comments.push({id:uuid(),student_id:sid,week_no:weekNo,comment,created_at:todayStr()});return;}
@@ -261,7 +265,8 @@ async function studentBundle(sid,ctx){
   const questionRecords=scores.map(sc=>{const q=qById[sc.question_id];if(!q)return null;
     return {unit:q.unit,cognition:q.cognition,points:Number(q.points)||0,earned:Number(sc.earned)||0,week:sessById[q.session_id]?.week_no,date:sessById[q.session_id]?.exam_date,session_id:q.session_id,wrong_reason:sc.wrong_reason,no:q.no,reason_note:sc.reason_note,photo_url:sc.photo_url};
   }).filter(Boolean);
-  const essayInputs=essays.map(e=>({earned:(e.cond_earned||0)+(e.proc_earned||0)+(e.ans_earned||0),max:(e.cond_max||0)+(e.proc_max||0)+(e.ans_max||0)}));
+  // 신형(items)·구형(3분할) 첨삭을 같은 규칙으로 접는다 — 준비도 15% 항목의 입력값.
+  const essayInputs=essays.map(e=>essayTotals(e));
   return {scores,homeworks,essays,perSession:sessArr,weeklyPercents,weeklyScaled,questionRecords,essayInputs,rawEssays:essays};
 }
 

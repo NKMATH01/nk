@@ -121,6 +121,19 @@ function judgePrescription(baselineRate,currentRate){
   return {key:'flat',label:'정체',cls:'amber',delta:d};
 }
 
+/* ── 첨삭 총점 (신·구 형식 공용) ──
+   items(문항×채점기준 O/△/X) 기록은 저장된 total_earned/total_max 를 쓰고,
+   그 이전 3분할(조건해석/풀이과정/최종답안) 기록은 cond/proc/ans 합으로 폴백한다.
+   판별은 **total_max 의 null 여부**로 한다 — total_earned 는 0점 기록일 수 있어
+   0 과 null 을 구분하지 못하면 멀쩡한 신규 기록이 구 경로로 새어 0/0 이 된다.
+   총점 합산은 이 함수 하나만 쓴다(db.js 준비도·essayRangeFor 양쪽). */
+function essayTotals(e){
+  if(!e)return {earned:0,max:0};
+  if(e.total_max!=null)return {earned:Number(e.total_earned)||0,max:Number(e.total_max)||0};
+  return {earned:(Number(e.cond_earned)||0)+(Number(e.proc_earned)||0)+(Number(e.ans_earned)||0),
+          max:(Number(e.cond_max)||0)+(Number(e.proc_max)||0)+(Number(e.ans_max)||0)};
+}
+
 /* ── 첨삭 점수 요약 (대학별 근거 표본) ──
    essay_gradings 중 해당 대학명으로 채점된 최근 n회의 총점 대비 %를
    최소~최대 구간·평균·표본 수로 돌려준다. 표본이 없으면 null. */
@@ -128,8 +141,7 @@ function essayRangeFor(essays,univName,limit=5){
   const rows=(essays||[])
     .filter(e=>e&&e.univ_name&&String(e.univ_name).trim()===String(univName||'').trim())
     .map(e=>{
-      const earned=(Number(e.cond_earned)||0)+(Number(e.proc_earned)||0)+(Number(e.ans_earned)||0);
-      const max=(Number(e.cond_max)||0)+(Number(e.proc_max)||0)+(Number(e.ans_max)||0);
+      const {earned,max}=essayTotals(e);
       return max>0?clamp(earned/max*100):null;
     })
     .filter(v=>v!=null)
@@ -193,4 +205,4 @@ function admitBand(rd,u){if(rd==null)return {label:'-',cls:'gray',delta:0};
 export { ewma, computeReadiness, weightedRecent3, shortfallContribution, hwAccuracyAvg, hwTimeAvg,
          heatFromRecords, band, admitBand,
          sessionPercentRows, cohortSessionStats, standardizeWeekly,
-         cellRateSince, judgePrescription, essayRangeFor, PRESCRIPTION_DELTA };
+         cellRateSince, judgePrescription, essayTotals, essayRangeFor, PRESCRIPTION_DELTA };

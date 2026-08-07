@@ -8,7 +8,7 @@ import {
   ewma, computeReadiness, weightedRecent3, shortfallContribution,
   hwAccuracyAvg, hwTimeAvg, band, admitBand,
   sessionPercentRows, cohortSessionStats, standardizeWeekly,
-  cellRateSince, judgePrescription, essayRangeFor,
+  cellRateSince, judgePrescription, essayTotals, essayRangeFor,
 } from './calc.js';
 
 let passed = 0;
@@ -291,6 +291,35 @@ t('표본이 없으면 null', () => assert.equal(essayRangeFor(ESSAYS, '서경�
 t('limit 으로 최근 n회만 본다', () => assert.equal(essayRangeFor(ESSAYS, '국민대', 1).n, 1));
 t('만점이 0인 첨삭은 제외한다(0으로 나누지 않음)', () => {
   assert.equal(essayRangeFor([{ univ_name: 'X', cond_max: 0, proc_max: 0, ans_max: 0 }], 'X'), null);
+});
+
+console.log('첨삭 총점 — 신(items)·구(3분할) 형식 폴백');
+t('total_* 가 있으면 그것을 쓴다', () => {
+  const r = essayTotals({ total_earned: 33, total_max: 60, cond_earned: 999, cond_max: 999 });
+  near(r.earned, 33); near(r.max, 60);
+});
+t('total_* 가 없으면 cond/proc/ans 합으로 폴백한다', () => {
+  const r = essayTotals({ cond_earned: 8, cond_max: 10, proc_earned: 16, proc_max: 20, ans_earned: 6, ans_max: 10 });
+  near(r.earned, 30); near(r.max, 40);
+});
+t('total_earned 가 0 이어도 total_max 가 있으면 폴백하지 않는다(0 과 null 구분)', () => {
+  // 전 문항 X 로 0점을 받은 신형 기록이 구 경로로 새면 0/0 이 되어 준비도에서 사라진다
+  const r = essayTotals({ total_earned: 0, total_max: 40, cond_earned: 8, cond_max: 10 });
+  near(r.earned, 0); near(r.max, 40);
+});
+t('빈 기록은 0/0', () => {
+  const r = essayTotals(null);
+  near(r.earned, 0); near(r.max, 0);
+});
+t('essayRangeFor 는 신·구 형식이 섞여 있어도 함께 집계한다', () => {
+  const mixed = [
+    { univ_name: '국민대', total_earned: 30, total_max: 60 },                                   // 50
+    { univ_name: '국민대', cond_earned: 8, cond_max: 10, proc_earned: 16, proc_max: 20, ans_earned: 6, ans_max: 10 }, // 75
+    { univ_name: '국민대', total_earned: 0, total_max: 40 },                                    // 0 (구 경로로 새면 제외돼 평균이 올라간다)
+  ];
+  const r = essayRangeFor(mixed, '국민대');
+  assert.equal(r.n, 3);
+  near(r.min, 0); near(r.max, 75); near(r.avg, 125 / 3);
 });
 
 console.log('\n' + passed + ' passed' + (process.exitCode ? ' / 일부 실패' : ' / 전부 통과'));

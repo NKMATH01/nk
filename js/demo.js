@@ -121,6 +121,26 @@ function buildDemoStore(){
       }
     });
   }
+  /* 첨삭 신형(items = 문항×채점기준 O/△/X) 샘플.
+     위 3분할 샘플은 그대로 남긴다 — 이력 화면의 두 렌더 경로를 데모에서 모두 봐야 한다.
+     mark 는 O(전액)/P(절반)/X(0). total_* 는 그 규칙으로 접은 값이다. */
+  const mkItems=(rows)=>rows.map(([no,crit])=>({no,criteria:crit.map(([label,points,mark])=>({label,points,mark}))}));
+  const sumItems=(items)=>items.reduce((a,it)=>{it.criteria.forEach(cr=>{
+    a.earned+=(cr.mark==='O'?cr.points:(cr.mark==='P'?cr.points/2:0));a.max+=cr.points;});return a;},{earned:0,max:0});
+  [[0,'국민대','2026-07-04',[[1,[['조건 해석',8,'O'],['풀이 과정',12,'P'],['최종 답안',10,'O']]],
+                             [2,[['조건 해석',8,'P'],['풀이 과정',12,'X'],['최종 답안',10,'P']]]],
+    '2번 문항 조건 해석이 흔들려 풀이 전체가 어긋났습니다. 도식화 후 조건을 다시 적는 훈련 필요.'],
+   [1,'상명대','2026-07-04',[[1,[['조건 해석',10,'O'],['풀이 과정',15,'O'],['최종 답안',10,'P']]]],
+    '서술 근거는 충분합니다. 최종 답안 표기(단위·범위)만 보완하면 만점권.']
+  ].forEach(([si,un,date,rows,comment])=>{
+    const st=students[si];if(!st)return;
+    const items=mkItems(rows),t=sumItems(items);
+    essay_gradings.push({id:uuid(),student_id:st.id,week_date:date,univ_name:un,items,
+      total_earned:Math.round(t.earned*2)/2,total_max:Math.round(t.max*2)/2,
+      cond_earned:null,cond_max:null,proc_earned:null,proc_max:null,ans_earned:null,ans_max:null,
+      comment,created_at:date});
+  });
+
   // 강사 코멘트(최근 주차)
   students.forEach((st,si)=>{
     teacher_comments.push({id:uuid(),student_id:st.id,week_no:6,
