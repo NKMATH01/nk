@@ -303,7 +303,8 @@ function rxCardHTML(list,records,logs,isAdmin){
         <button class="btn line sm rx_open" data-unit="${esc(p.unit)}" data-cog="${esc(p.cognition)}" data-rate="${p.baseline_rate==null?'':esc(r1(p.baseline_rate))}" data-error="${esc(p.error_type||'')}" data-prev="${esc(p.id)}">${svg('clipboardCheck','xs')}후속 처방 배정</button>
         <div class="rx_form" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--bg)"></div></div>`:''}
       ${!isAdmin&&p.status==='active'?`<div style="margin-top:6px">
-        ${doneToday?'<button class="btn line sm" disabled>오늘 기록됨</button>'
+        ${app.preview?'<button class="btn sm" disabled>다 했어요</button> <span class="muted" style="font-size:11.5px">미리보기에서는 저장되지 않습니다</span>'
+          :doneToday?'<button class="btn line sm" disabled>오늘 기록됨</button>'
           :`<button class="btn sm rx_done" data-id="${esc(p.id)}">다 했어요</button>`}</div>`:''}
     </div>`;}).join('');
   return `<div class="card"><h3>${svg('clipboardCheck')}처방 · 재측정 <span class="sub">배정 이후 실시된 주간테스트로 자동 판정 (±5%p · 재측정 ${RECHECK_MIN_POINTS}점 이상)</span></h3>${rows}

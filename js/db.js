@@ -88,6 +88,16 @@ async function removeCounselAudio(path){
      audio_path 가 이 목록에 섞이면 그대로 학생·학부모 응답에 실려 나간다.
    학생 경로(listStudentCounseling)와 학부모 경로(listParentCounseling)가 같은 값을
    쓰도록 한 곳에 둔다 — 한쪽만 넓히는 실수가 나오지 않게. */
+/* ★ 미리보기 쓰기 차단 (이중 방어) ────────────────────────────────
+   미리보기 토큰은 **진짜 학생·학부모 권한**이라 RLS 는 이 쓰기를 그대로 통과시킨다.
+   원장이 미리보기 중에 답안을 제출하거나 [다 했어요]를 누르면 **가짜 학생 기록이 남는다.**
+   화면에서도 버튼을 비활성하지만(diagnosis/essays/parent), UI 만 믿지 않는다.
+   막는 대상은 학생·학부모가 직접 쓰는 네 곳뿐이다 —
+     insertSubmission(답안 제출) · insertPrescriptionLog([다 했어요]) ·
+     ackParent([확인했습니다]) · insertCounselRequest(상담 요청).
+   관리자 쓰기는 미리보기에서 애초에 도달할 수 없으므로(학생·학부모 메뉴에 없다) 건드리지 않는다. */
+function blockIfPreview(){if(app.preview)throw new Error('미리보기에서는 저장되지 않습니다.');}
+
 const COUNSEL_SAFE_COLS='id,note_date,category,content,follow_up,visible_to_student';
 const PARENT_COUNSEL_CAT='학부모상담';
 const pickCounselCols=n=>Object.fromEntries(COUNSEL_SAFE_COLS.split(',').map(k=>[k,n[k]]));
@@ -253,6 +263,7 @@ const db={
      같은 주차를 두 번 눌러도 첫 확인 시각이 남아야 하고, 그래야 update 정책 없이
      insert 권한만으로 동작한다(0020 RLS). */
   async ackParent(sid,weekNo){
+    blockIfPreview();
     if(app.DEMO){const a=(app.store.parent_ack=app.store.parent_ack||[]);
       if(a.find(x=>x.student_id===sid&&x.week_no===weekNo))return;
       a.push({id:uuid(),student_id:sid,week_no:weekNo,acked_at:new Date().toISOString()});return;}
@@ -263,6 +274,7 @@ const db={
     return await sbq(app.sb.from('parent_ack').select('*').eq('student_id',sid)
       .order('week_no',{ascending:false}),'확인 기록 조회',[]);},
   async insertCounselRequest(row){
+    blockIfPreview();
     if(app.DEMO){(app.store.counsel_requests=app.store.counsel_requests||[])
       .unshift(Object.assign({id:uuid(),status:'open',created_at:new Date().toISOString()},row));return;}
     const {error}=await app.sb.from('counsel_requests').insert(row);if(error)throw error;},
@@ -308,6 +320,7 @@ const db={
     if(sid)q=q.eq('student_id',sid);
     return await sbq(q,'처방 실행 기록 조회',[]);},
   async insertPrescriptionLog(row){
+    blockIfPreview();
     if(app.DEMO){const a=(app.store.prescription_logs=app.store.prescription_logs||[]);
       if(a.find(l=>l.prescription_id===row.prescription_id&&l.log_date===row.log_date))return;   // unique 제약과 같은 동작
       a.unshift(Object.assign({id:uuid(),created_at:new Date().toISOString()},row));return;}
@@ -327,7 +340,7 @@ const db={
     if(sid)q=q.eq('student_id',sid);
     if(qid)q=q.eq('question_id',qid);
     return await sbq(q,'제출물 조회',[]);},
-  async insertSubmission(s){if(app.DEMO){const o=Object.assign({id:uuid(),submitted_at:todayStr()},s);(app.store.submissions=app.store.submissions||[]).unshift(o);return o;}
+  async insertSubmission(s){blockIfPreview();if(app.DEMO){const o=Object.assign({id:uuid(),submitted_at:todayStr()},s);(app.store.submissions=app.store.submissions||[]).unshift(o);return o;}
     const {data,error}=await app.sb.from('submissions').insert(s).select().single();if(error)throw error;return data;},
   async listGradingRuns(submissionId){if(app.DEMO)return [];
     return await sbq(app.sb.from('grading_runs').select('*').eq('submission_id',submissionId).order('created_at',{ascending:false}),'AI 기록 조회',[]);},
@@ -365,6 +378,10 @@ const db={
     const {error}=await app.sb.from('admission_outcomes').upsert(row,{onConflict:'student_id,university_id,year'});if(error)throw error;},
   async createParentLink(sid,days){if(app.DEMO)throw new Error('데모 모드에서는 링크를 발급하지 않습니다.');
     return await apiFetch('/api/parent-link',{method:'POST',body:{student_id:sid,days}});},
+  /* 미리보기 토큰 발급(관리자 전용, 15분). 그 역할 계정의 클레임 그대로 나온다 —
+     관리자 데이터로 학생 화면을 그리면 코호트가 달라져 숫자가 틀린다(api/preview-token.js). */
+  async createPreviewToken(sid,role){if(app.DEMO)throw new Error('데모 모드에서는 미리보기를 열지 않습니다.');
+    return await apiFetch('/api/preview-token',{method:'POST',body:{student_id:sid,role}});},
   async generateReportDraft(sid,weekNo){if(app.DEMO)throw new Error('데모 모드에서는 초안을 생성하지 않습니다.');
     return await apiFetch('/api/report-draft',{method:'POST',body:{student_id:sid,week_no:weekNo}});},
 

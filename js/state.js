@@ -13,6 +13,7 @@ export const app = {
   sb: null,                              // Supabase 클라이언트
   DEMO: false,                           // ?demo=1 여부
   session: null,                         // 실제 로그인 세션
+  preview: null,                         // 미리보기 중이면 {role,studentName}. 이 값이 있으면 모든 쓰기를 막는다
   cur: { role: 'admin', studentId: null },  // 현재 화면 역할/대상 학생
   state: { activeTab: null, charts: [] },   // 화면 상태(활성 탭, Chart 인스턴스)
   store: null,                           // 데모 모드 메모리 저장소
@@ -23,4 +24,5 @@ export const app = {
   enterApp: null,                        // main.js 가 주입
   navigate: null,                        // main.js 가 주입
   doLogout: null,                        // main.js 가 주입
+  exitPreview: null,                     // main.js 가 주입
 };

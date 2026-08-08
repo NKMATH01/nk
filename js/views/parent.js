@@ -171,22 +171,26 @@ function blockParentCounsel(notes){
 /* ── C. 개입 2개 ──
    확인 버튼과 상담 요청. 둘 다 학부모의 입력을 최소로 두고, 강사가 받는 것도 최소로 둔다. */
 function blockC(selWeek,acked,openReq){
+  // 미리보기(원장이 학부모 화면을 열어 본 상태)에서는 쓰기 버튼을 잠근다 —
+  // 여기서 누르면 **진짜 학부모 확인 기록·상담 요청**이 만들어진다(db.js 에서도 한 번 더 막는다).
+  const pv=!!app.preview;
+  const pvNote='<div class="muted" style="font-size:11.5px;margin-top:6px">미리보기에서는 저장되지 않습니다.</div>';
   const ackBox=selWeek==null?''
     :acked
       ?`<div class="pill" style="display:inline-block">${selWeek}주차 리포트 확인함 · ${esc(fmtDate(acked.acked_at))}</div>`
-      :`<button class="btn" id="pAck">${selWeek}주차 리포트 확인했습니다</button>
-         <div class="muted" style="font-size:11.5px;margin-top:6px">확인하셨다는 표시만 남습니다. 답장이 필요하지 않습니다.</div>`;
+      :`<button class="btn" id="pAck" ${pv?'disabled':''}>${selWeek}주차 리포트 확인했습니다</button>
+         ${pv?pvNote:'<div class="muted" style="font-size:11.5px;margin-top:6px">확인하셨다는 표시만 남습니다. 답장이 필요하지 않습니다.</div>'}`;
   const reqBox=openReq
     ?`<div class="pill" style="display:inline-block">상담 요청 ${esc(REQ_STATUS_LABEL[openReq.status]||'접수됨')}</div>
        <div class="muted" style="font-size:11.5px;margin-top:6px">희망일 ${
          (Array.isArray(openReq.pref_dates)?openReq.pref_dates:[]).map(d=>esc(fmtDate(d))).join(' / ')||'미지정'} · 원장이 확인 후 연락드립니다.</div>`
     :`<div class="field" style="margin-bottom:8px"><label style="font-size:12px">상담 유형</label>
-        <select id="pReqCat" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px">${COUNSEL_REQ_CATS.map(k=>`<option>${esc(k)}</option>`).join('')}</select></div>
+        <select id="pReqCat" ${pv?'disabled':''} style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px">${COUNSEL_REQ_CATS.map(k=>`<option>${esc(k)}</option>`).join('')}</select></div>
       <div class="field"><label style="font-size:12px">희망 날짜 (최대 3개)</label>
-        ${[0,1,2].map(i=>`<select class="pReqDate" data-i="${i}" style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;margin-bottom:6px">
+        ${[0,1,2].map(i=>`<select class="pReqDate" data-i="${i}" ${pv?'disabled':''} style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;margin-bottom:6px">
             <option value="">선택 안 함</option>${prefDateChoices().map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('')}</select>`).join('')}</div>
-      <button class="btn" id="pReqGo">상담 요청 보내기</button>
-      <div class="muted" style="font-size:11.5px;margin-top:6px">희망 날짜와 유형만 보냅니다. 자세한 이야기는 상담 때 직접 나눕니다.</div>`;
+      <button class="btn" id="pReqGo" ${pv?'disabled':''}>상담 요청 보내기</button>
+      ${pv?pvNote:'<div class="muted" style="font-size:11.5px;margin-top:6px">희망 날짜와 유형만 보냅니다. 자세한 이야기는 상담 때 직접 나눕니다.</div>'}`;
   return `<div class="p-card"><h3 style="margin:0 0 8px;font-size:14px">확인 · 상담 요청</h3>
     <div style="margin-bottom:12px">${ackBox}</div>
     <div style="border-top:1px dashed var(--line);padding-top:12px">${reqBox}</div>

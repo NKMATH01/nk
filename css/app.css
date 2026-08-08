@@ -71,6 +71,18 @@
   .content{padding:22px 26px;max-width:1200px;width:100%}
   .demo-strip{background:#FFF9EC;border-top:1px solid #F0E2BE;color:var(--amber);text-align:center;font-size:12px;padding:7px}
 
+  /* 미리보기 배너 — 화면 최상단 고정.
+     데모 배너(demoStrip, 연노랑·하단)와 **색과 위치를 모두 달리한다** —
+     실제 학생 화면과 혼동되면 원장이 진짜 학생 기록을 남기게 된다. */
+  .preview-strip{position:fixed;top:0;left:0;right:0;z-index:100;background:var(--purple);color:#fff;
+    display:flex;align-items:center;justify-content:center;gap:12px;padding:7px 14px;font-size:12.5px;font-weight:700}
+  .preview-exit{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.45);color:#fff;
+    padding:4px 10px;border-radius:8px;font-size:12px;font-weight:700}
+  /* 배너가 fixed 라 그만큼 본문을 내리고, sticky 로 붙는 것들의 기준선도 함께 내린다. */
+  body.previewing{padding-top:34px}
+  body.previewing .sidebar{top:34px;height:calc(100vh - 34px)}
+  body.previewing .topbar,body.previewing .p-head{top:34px}
+
   .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px;margin-bottom:16px}
   .card > h3{margin:0 0 14px;font-size:14.5px;display:flex;align-items:center;gap:8px;letter-spacing:-.2px}
   .card > h3 .ic{color:var(--muted)}

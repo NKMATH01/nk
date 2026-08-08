@@ -13,9 +13,35 @@ import { $, normPhone } from './util.js';
 // 토큰 수명이 7일이라, 남은 수명이 이 값 미만이면 앱 진입 시 조용히 갱신한다.
 const REFRESH_BEFORE_MS = 2*24*60*60*1000;
 
+/* ── 세션 저장소가 둘인 이유 ───────────────────────────────────────
+   실제 로그인 세션 : localStorage   — 브라우저 전체(모든 탭) 공유. 기존 그대로.
+   미리보기 세션    : sessionStorage — **탭 단위**.
+
+   ★ 미리보기를 localStorage 로 옮기지 마라. localStorage 는 탭 간 공유라,
+     원장이 [학생 화면 보기]로 연 탭이 관리자 세션을 학생 세션으로 덮어
+     **원래 보던 관리자 탭이 학생으로 바뀌어 로그아웃된다.**
+   loadSession 이 sessionStorage 를 먼저 보므로, 미리보기 세션은 그 탭에서만 이긴다. */
+const PREVIEW_KEY = SESSION_KEY + '_preview';
+
+function readStore(store,key){try{const s=JSON.parse(store.getItem(key)||'null');if(s&&s.token&&s.exp*1000>Date.now())return s;}catch(e){}store.removeItem(key);return null;}
 function saveSession(s){localStorage.setItem(SESSION_KEY,JSON.stringify(s));}
-function loadSession(){try{const s=JSON.parse(localStorage.getItem(SESSION_KEY)||'null');if(s&&s.token&&s.exp*1000>Date.now())return s;}catch(e){}localStorage.removeItem(SESSION_KEY);return null;}
-function clearSession(){localStorage.removeItem(SESSION_KEY);}
+// 미리보기 세션만 저장한다. app.preview(역할·학생 이름)도 함께 실어 새로고침에서 복원한다.
+function savePreviewSession(s){sessionStorage.setItem(PREVIEW_KEY,JSON.stringify(s));}
+function loadSession(){return readStore(sessionStorage,PREVIEW_KEY)||readStore(localStorage,SESSION_KEY);}
+// 로그아웃 — 실제 세션과 미리보기 세션을 모두 지운다.
+function clearSession(){localStorage.removeItem(SESSION_KEY);sessionStorage.removeItem(PREVIEW_KEY);}
+// 미리보기 종료 — **sessionStorage 만** 지운다(다른 탭의 관리자 세션은 건드리지 않는다).
+function clearPreviewSession(){sessionStorage.removeItem(PREVIEW_KEY);}
+
+/* 미리보기 종료. sessionStorage 만 비우고 그 탭을 닫는다.
+   window.close() 는 스크립트가 연 탭에서만 통하므로, 막히면 같은 탭을 새로 고쳐
+   localStorage 의 관리자 세션으로 되돌아가게 한다. */
+function exitPreview(){
+  clearPreviewSession();
+  app.preview=null;app.session=null;
+  try{window.close();}catch(e){}
+  setTimeout(()=>{try{location.replace(location.pathname);}catch(e){location.reload();}},150);
+}
 
 async function doLogin(){
   const phone=normPhone($('loginPhone').value),pw=$('loginPw').value,err=$('loginErr');err.textContent='';
@@ -35,13 +61,17 @@ async function doLogin(){
   }catch(e){err.textContent='로그인 오류: '+(e?.message||'네트워크 확인');}
   finally{$('loginBtn').disabled=false;$('loginBtn').textContent='로그인';}
 }
-function doLogout(){clearSession();app.session=null;applySession();destroyCharts();$('appView').style.display='none';$('parentView').style.display='none';$('loginView').style.display='flex';$('loginPw').value='';}
+/* 미리보기 탭에서는 [로그아웃]도 미리보기 종료로 처리한다 —
+   여기서 clearSession 을 부르면 localStorage 까지 비워 다른 탭의 관리자가 로그아웃된다. */
+function doLogout(){if(app.preview){exitPreview();return;}clearSession();app.session=null;applySession();destroyCharts();$('appView').style.display='none';$('parentView').style.display='none';$('loginView').style.display='flex';$('loginPw').value='';}
 
 /* 남은 수명이 짧으면 토큰을 연장한다. 실패해도 조용히 넘어간다
    (기존 토큰이 아직 유효하므로 화면은 그대로 동작한다). */
 async function maybeRefreshSession(){
   const s=app.session;
-  if(app.DEMO||!s||!s.token||!s.exp)return false;
+  // ★ 미리보기는 갱신하지 않는다 — /api/refresh 가 7일짜리 정식 토큰을 주므로
+  //   갱신하는 순간 15분짜리 미리보기 수명이 사라진다.
+  if(app.DEMO||app.preview||!s||!s.token||!s.exp)return false;
   const leftMs=s.exp*1000-Date.now();
   if(leftMs<=0||leftMs>=REFRESH_BEFORE_MS)return false;
   try{
@@ -57,4 +87,5 @@ async function maybeRefreshSession(){
   }catch(e){console.warn('세션 갱신 실패(기존 토큰 유지):',e&&e.message);return false;}
 }
 
-export { saveSession, loadSession, clearSession, doLogin, doLogout, maybeRefreshSession };
+export { saveSession, savePreviewSession, loadSession, clearSession, clearPreviewSession, exitPreview,
+         doLogin, doLogout, maybeRefreshSession };

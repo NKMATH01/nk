@@ -1,11 +1,11 @@
 /* 진입점 — 메뉴 정의, enterApp, navigate 라우터, 부트스트랩 */
-import { doLogin, doLogout, loadSession, maybeRefreshSession, saveSession } from './auth.js';
+import { doLogin, doLogout, exitPreview, loadSession, maybeRefreshSession, saveSession, savePreviewSession } from './auth.js';
 import { cdnLoaded, isConfigured } from './config.js';
 import { applySession, db } from './db.js';
 import { buildDemoStore } from './demo.js';
 import { svg } from './icons.js';
 import { app } from './state.js';
-import { bindDemoSwitch, demoSwitchHTML, destroyCharts } from './ui.js';
+import { bindDemoSwitch, demoSwitchHTML, destroyCharts, hidePreviewStrip, showPreviewStrip } from './ui.js';
 import { $, esc } from './util.js';
 import { renderAdmission } from './views/admission.js';
 import { renderCounseling, renderStudentCounsel } from './views/counseling.js';
@@ -111,11 +111,49 @@ async function adoptParentToken(){
   }catch(e){console.warn('학부모 링크 검증 실패',e&&e.message);return false;}
 }
 
+/* ═══════════ 미리보기(?preview=) ═══════════
+   원장이 [학생 관리]에서 연 "그 학생 계정으로 로그인한 것과 같은 화면".
+   ★ ptoken 과 **별개의 분기**다. 용도가 다르다 —
+     ptoken : 학부모 본인 기기용. 정식 세션으로 승격하고 localStorage 에 남긴다.
+     preview: 원장 기기의 그 탭에서만. sessionStorage 에 두어야 관리자 탭이 살아 있다. */
+
+/* 미리보기 토큰의 페이로드를 읽는다. **서명은 검증하지 않는다** — 검증은 서버와
+   PostgREST(RLS)가 한다. 여기서 읽는 값은 화면 표시·만료 판단용이다.
+   ptoken 처럼 /api/refresh 로 승격하지 않는 이유: 승격하면 7일짜리 정식 토큰이 되어
+   미리보기용 15분 수명이 사라진다. */
+function decodeTokenPayload(t){
+  try{
+    const p=String(t).split('.')[1];
+    return JSON.parse(atob(p.replace(/-/g,'+').replace(/_/g,'/')));
+  }catch(e){return null;}
+}
+async function startPreview(token){
+  const p=decodeTokenPayload(token);
+  if(!p||!p.exp||p.exp*1000<=Date.now()||(p.app_role!=='student'&&p.app_role!=='parent'))return false;
+  app.session={token,role:p.app_role,student_id:p.student_id||null,phone:null,exp:p.exp,tv:p.tv};
+  app.preview={role:p.app_role,studentName:''};   // enterApp 전에 세워야 쓰기 UI 가 처음부터 잠긴다
+  applySession();
+  try{
+    // 이 토큰의 RLS 로는 본인(자녀) 한 명만 돌아온다 — 배너에 쓸 이름을 그대로 받는다.
+    const studs=await db.listStudents();
+    app.preview.studentName=(studs.find(s=>s.id===app.session.student_id)||studs[0]||{}).name||'학생';
+    savePreviewSession(Object.assign({},app.session,{preview:app.preview}));
+    showPreviewStrip();
+    await enterApp(app.session.role,app.session.student_id);
+    return true;
+  }catch(e){
+    console.error('미리보기 진입 실패',e);
+    hidePreviewStrip();
+    return false;
+  }
+}
+
 /* 하위 모듈이 순환 import 없이 라우터를 호출할 수 있도록 후크를 주입한다.
    아래 부트스트랩이 실행되기 전에 채워져 있어야 한다. */
 app.enterApp = enterApp;
 app.navigate = navigate;
 app.doLogout = doLogout;
+app.exitPreview = exitPreview;
 
 /* ═══════════ 부트스트랩 ═══════════ */
 $('loginLogo').innerHTML=svg('target');$('sideLogo').innerHTML=svg('target');$('logoutIcon').innerHTML=svg('logout');
@@ -151,8 +189,22 @@ $('sideBackdrop').addEventListener('click',()=>setSide(false));
     return;
   }
 
+  // 미리보기(?preview=) — 관리자가 학생·학부모 화면을 그 역할의 토큰으로 여는 경로.
+  // 주소창에서 토큰을 먼저 지운다(ptoken 과 같은 관례 — 뒤로가기·공유로 새어 나가지 않게).
+  const preview=params.get('preview');
+  if(preview){
+    try{history.replaceState(null,'',location.pathname);}catch(e){}
+    if(await startPreview(preview))return;
+    app.session=null;app.preview=null;applySession();
+    $('loginView').style.display='flex';
+    $('loginErr').textContent='미리보기가 만료되었습니다(15분). [학생 관리]에서 다시 열어 주세요.';
+    return;
+  }
+
   const s=loadSession();
   app.session=s;
+  // 미리보기 탭을 새로고침한 경우 — sessionStorage 세션에 실린 preview 정보를 복원한다.
+  if(s&&s.preview){app.preview=s.preview;showPreviewStrip();}
   // 세션 토큰을 실은 클라이언트를 만든다. 토큰 클레임으로 RLS 가 판별되므로
   // 이 호출 전에는 어떤 조회도 하면 안 된다.
   applySession();

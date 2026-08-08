@@ -58,6 +58,24 @@ export async function hydrateSignedPhotos(root){
   }));
 }
 
+/* 미리보기 배너 — app.preview 가 있는 탭에만 뜬다.
+   [관리자로 돌아가기]는 sessionStorage 만 비운다(app.exitPreview → js/auth.js exitPreview).
+   여기서 auth.js 를 import 하면 순환이라(auth.js → ui.js) 후크를 경유한다. */
+export function showPreviewStrip(){
+  const el=$('previewStrip');
+  if(!el||!app.preview)return;
+  $('previewLabel').textContent='미리보기 · '+(app.preview.role==='parent'?'학부모':'학생')+' 화면 — '+(app.preview.studentName||'');
+  el.style.display='flex';
+  document.body.classList.add('previewing');
+  const b=$('previewExit');
+  if(b&&!b.dataset.bound){b.dataset.bound='1';b.addEventListener('click',()=>{if(app.exitPreview)app.exitPreview();});}
+}
+// 미리보기 진입에 실패했을 때(만료·조회 실패) 배너를 되돌린다.
+export function hidePreviewStrip(){
+  const el=$('previewStrip');if(el)el.style.display='none';
+  document.body.classList.remove('previewing');
+}
+
 function destroyCharts(){app.state.charts.forEach(c=>{try{c.destroy();}catch(e){}});app.state.charts=[];}
 
 function demoSwitchHTML(role){

@@ -93,6 +93,10 @@ async function renderStuCards(universities,savedSid){
         <div style="margin-top:8px"><button class="btn line sm plink">${svg('file','xs')}학부모 리포트 링크 발급</button>
           <span class="muted" style="font-size:11.5px">비밀번호 없이 자녀 리포트만 볼 수 있는 링크입니다(기본 30일).</span>
           <div class="plink_out" style="margin-top:6px"></div></div>
+        <div style="margin-top:8px"><button class="btn line sm prev_student" ${sAcc?'':'disabled'}>${svg('users','xs')}학생 화면 보기</button>
+          <button class="btn line sm prev_parent" ${pAcc?'':'disabled'}>${svg('users','xs')}학부모 화면 보기</button>
+          <span class="muted" style="font-size:11.5px">그 계정으로 로그인한 것과 같은 화면을 새 탭에서 엽니다(15분). 미리보기에서는 저장되지 않습니다.</span>
+          <div class="prev_out" style="margin-top:6px"></div></div>
       </div>
     </div>`);
   }
@@ -124,6 +128,8 @@ async function renderStuCards(universities,savedSid){
     card.querySelector('.acc_student').addEventListener('click',()=>createAcct(card,sid,'student',accMsg));
     card.querySelector('.acc_parent').addEventListener('click',()=>createAcct(card,sid,'parent',accMsg));
     card.querySelector('.plink').addEventListener('click',()=>issueParentLink(card,sid));
+    card.querySelector('.prev_student').addEventListener('click',()=>openPreview(card,sid,'student'));
+    card.querySelector('.prev_parent').addEventListener('click',()=>openPreview(card,sid,'parent'));
   });
 }
 async function createAcct(card,sid,role,m){
@@ -169,4 +175,28 @@ async function issueParentLink(card,sid){
   finally{btn.disabled=false;}
 }
 
-export { renderStudents, renderStuCards, createAcct, issueParentLink };
+/* 학생·학부모 화면 미리보기.
+   **그 역할의 토큰**으로 새 탭을 연다 — 관리자 데이터로 학생 화면을 그리면 코호트가
+   전체가 되어 학생이 실제로 보는 숫자와 달라진다(api/preview-token.js 주석 참고).
+   미리보기 탭의 세션은 sessionStorage 라 이 관리자 탭은 그대로 살아 있다(js/auth.js).
+
+   ★ 빈 탭을 클릭 직후에 먼저 연다. await 뒤의 window.open 은 사용자 제스처와 끊겨
+     팝업 차단에 걸린다. 토큰을 받은 뒤 그 탭의 주소만 채운다. */
+async function openPreview(card,sid,role){
+  const out=card.querySelector('.prev_out');
+  const btn=card.querySelector(role==='student'?'.prev_student':'.prev_parent');
+  out.innerHTML='';
+  if(app.DEMO){out.innerHTML='<span class="chip gray">데모 모드 — 미리보기를 열지 않습니다</span>';return;}
+  const w=window.open('','_blank');
+  btn.disabled=true;
+  try{
+    const r=await db.createPreviewToken(sid,role);
+    const url=location.origin+'/?preview='+encodeURIComponent(r.token);
+    if(w)w.location.replace(url);else window.open(url,'_blank');
+  }catch(e){
+    if(w)try{w.close();}catch(e2){}
+    out.innerHTML='<div class="msg err">'+esc(e?.message||'오류')+'</div>';
+  }finally{btn.disabled=false;}
+}
+
+export { renderStudents, renderStuCards, createAcct, issueParentLink, openPreview };

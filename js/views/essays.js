@@ -322,10 +322,10 @@ async function studentSubmitCardHTML(sid,ctx,bundle){
 
   return `<div class="card"><h3>${svg('pen')}내 답안 제출 <span class="sub">사진을 올리면 선생님이 확인합니다</span></h3>
     ${opts?`<div class="row">
-      <div class="field" style="flex:2"><label>문항 선택</label><select id="sub_q">${opts}</select></div>
-      <div class="field" style="flex:2"><label>답안 사진</label><input type="file" id="sub_file" accept="image/*" style="font-size:12px"></div>
-      <button class="btn" id="sub_go">제출</button></div>
-      <div id="sub_msg" class="msg"></div>`
+      <div class="field" style="flex:2"><label>문항 선택</label><select id="sub_q" ${app.preview?'disabled':''}>${opts}</select></div>
+      <div class="field" style="flex:2"><label>답안 사진</label><input type="file" id="sub_file" accept="image/*" style="font-size:12px" ${app.preview?'disabled':''}></div>
+      <button class="btn" id="sub_go" ${app.preview?'disabled':''}>제출</button></div>
+      <div id="sub_msg" class="msg">${app.preview?'미리보기에서는 저장되지 않습니다.':''}</div>`
       :'<p class="muted">아직 등록된 문항이 없습니다.</p>'}
     <div class="divider"></div>
     <div class="muted" style="font-size:12px;font-weight:700;margin-bottom:4px">최근 제출 · 채점 결과</div>
@@ -337,6 +337,9 @@ function bindStudentSubmit(c,sid){
   if(!btn)return;
   btn.addEventListener('click',async()=>{
     const m=$('sub_msg');m.className='msg';m.textContent='';
+    // 미리보기는 여기서 먼저 끊는다 — Storage 업로드가 db.insertSubmission 보다 앞서므로
+    // db 쪽 차단만으로는 파일이 버킷에 남는다.
+    if(app.preview){m.textContent='미리보기에서는 저장되지 않습니다.';return;}
     const qid=$('sub_q').value;
     const file=$('sub_file').files[0];
     if(!qid){m.className='msg err';m.textContent='문항을 선택하세요.';return;}
