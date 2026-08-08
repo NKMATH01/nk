@@ -103,26 +103,105 @@ function standardizeWeekly(sessArr,stats){
 
 /* ── 처방-재측정 판정 ── */
 const PRESCRIPTION_DELTA=5;   // %p. 이보다 작은 변화는 측정 잡음으로 본다.
+/* 재측정 표본 게이트. 배점 합이 이보다 얇으면 판정하지 않는다.
+   ±5%p 가 의미를 가지려면 그만한 표본이 있어야 한다 — 2점짜리 한 문항으로
+   "개선"을 선언하면 다음 주에 저절로 되돌아온다. 히트맵 게이트(SAMPLE_GATE)와
+   달리 배점 하나만 본다: 재측정 구간은 배정 이후라 회차 수가 원래 적다. */
+const RECHECK_MIN_POINTS=10;
 
-/* 배정 이후 실시된 회차만 모아 해당 단원×사고과정 정답률을 낸다. 데이터 없으면 null.
+/* 배정 이후 실시된 회차만 모아 해당 단원×사고과정 통계를 낸다.
+   {rate, n, points, sessions}. 배점이 0이면 rate=null(재측정 없음).
 
    경계는 **초과(>)** 다. 같은 날짜의 회차는 재측정 표본에서 뺀다 —
    처방은 그 회차 결과를 보고 배정되므로, 취약을 만들어 낸 바로 그 회차가
    재측정에 섞이면 개선을 구조적으로 과소평가한다(기준선과 재측정이 같은 표본을 공유). */
-function cellRateSince(records,unit,cognition,sinceDate){
+function cellStatsSince(records,unit,cognition,sinceDate){
   const rs=(records||[]).filter(r=>r.unit===unit&&r.cognition===cognition
     &&(!sinceDate||(r.date&&String(r.date)>String(sinceDate))));
-  const pts=rs.reduce((s,r)=>s+(Number(r.points)||0),0);
-  if(!pts)return null;
-  return rs.reduce((s,r)=>s+(Number(r.earned)||0),0)/pts*100;
+  const points=rs.reduce((s,r)=>s+(Number(r.points)||0),0);
+  const sessions=new Set(rs.map(r=>r.date).filter(Boolean)).size;
+  if(!points)return {rate:null,n:rs.length,points:0,sessions};
+  return {rate:rs.reduce((s,r)=>s+(Number(r.earned)||0),0)/points*100,n:rs.length,points,sessions};
+}
+// 정답률만 필요한 호출부용 얇은 래퍼. 동작은 종전과 완전히 같다.
+function cellRateSince(records,unit,cognition,sinceDate){
+  return cellStatsSince(records,unit,cognition,sinceDate).rate;
 }
 
-function judgePrescription(baselineRate,currentRate){
-  if(baselineRate==null||currentRate==null)return {key:'pending',label:'재측정 대기',cls:'gray',delta:null};
+/* 처방 기준선 — 재측정과 **같은 자**로 잰다.
+   히트맵 rate 는 최근 3회 **가중**평균인데 재측정은 단순 배점 풀링이라,
+   지금까지 서로 다른 추정량을 ±5%p 로 비교하고 있었다. 배정 시점에
+   이 함수로 잰 값을 prescriptions.baseline_rate_pooled 에 함께 저장한다.
+   구간은 그 셀에 기록이 있는 **최근 windowSessions 회차**(기본 3회)다. */
+function cellPooledRecent(records,unit,cognition,windowSessions=3){
+  const rs=(records||[]).filter(r=>r&&r.unit===unit&&r.cognition===cognition);
+  const dates=[...new Set(rs.map(r=>r.date).filter(Boolean))].sort().slice(-windowSessions);
+  // 날짜가 없는 기록만 있으면(구 데이터) 구간을 자를 근거가 없으므로 전부 쓴다.
+  const win=dates.length?rs.filter(r=>dates.includes(r.date)):rs;
+  const points=win.reduce((s,r)=>s+(Number(r.points)||0),0);
+  if(!points)return {rate:null,n:win.length,points:0,sessions:dates.length};
+  return {rate:win.reduce((s,r)=>s+(Number(r.earned)||0),0)/points*100,
+          n:win.length,points,sessions:dates.length};
+}
+
+const JUDGE_META={
+  improved:{label:'개선',cls:'green'},
+  flat:{label:'정체',cls:'amber'},
+  worse:{label:'악화',cls:'red'},
+  pending:{label:'재측정 대기',cls:'gray'},
+  insufficient:{label:'표본 부족',cls:'gray'},
+};
+function judgeOf(key,delta){
+  const m=JUDGE_META[key]||JUDGE_META.pending;
+  return {key:JUDGE_META[key]?key:'pending',label:m.label,cls:m.cls,delta:delta==null?null:Number(delta)};
+}
+
+/* judgePrescription(기준선, 재측정, 재측정배점)
+
+   ★ 기준선과 재측정은 **같은 추정량**이어야 한다. 부르는 쪽이 섞지 않도록
+     화면은 이 함수를 직접 부르지 말고 아래 prescriptionJudgment() 를 쓴다.
+
+   recheckPoints 를 넘기면 표본 게이트가 걸린다. 넘기지 않으면(구 호출부)
+   게이트를 적용하지 않는다 — 표본 크기를 모르는 채로 "부족"을 선언할 수는 없다. */
+function judgePrescription(baselineRate,currentRate,recheckPoints){
+  if(baselineRate==null||currentRate==null)return judgeOf('pending',null);
+  // 재측정이 있는데 배점이 얇으면 판정하지 않는다. delta 도 내보내지 않는다 —
+  // 판정하지 않기로 해 놓고 숫자를 보여주면 그 숫자가 판정으로 읽힌다.
+  if(recheckPoints!=null&&Number(recheckPoints)<RECHECK_MIN_POINTS)return judgeOf('insufficient',null);
   const d=Number(currentRate)-Number(baselineRate);
-  if(d>=PRESCRIPTION_DELTA)return {key:'improved',label:'개선',cls:'green',delta:d};
-  if(d<=-PRESCRIPTION_DELTA)return {key:'worse',label:'악화',cls:'red',delta:d};
-  return {key:'flat',label:'정체',cls:'amber',delta:d};
+  if(d>=PRESCRIPTION_DELTA)return judgeOf('improved',d);
+  if(d<=-PRESCRIPTION_DELTA)return judgeOf('worse',d);
+  return judgeOf('flat',d);
+}
+
+/* ── 처방 판정 진입점 (화면은 전부 이 함수만 쓴다) ──
+   대시보드·취약진단·리포트가 각자 폴백을 쓰면 같은 처방이 화면마다 다르게 보인다.
+
+   우선순위
+     1) p.result 가 있으면 **저장된 판정을 그대로** 읽는다(0019).
+        다시 계산하지 않는다 — 데이터가 더 쌓여도 그때 내린 판정이 흔들리면 기록이 아니다.
+     2) 없으면 기준선과 재측정을 비교한다.
+
+   ★ 기준선 폴백 규약 (0019)
+        baseline_rate_pooled 가 있으면 → 그 값(재측정과 같은 단순 배점 풀링)
+        null 이면(0019 이전 처방)      → 기존 baseline_rate (개편 전과 같은 값)
+     과거 처방의 기준선·delta 는 개편 전과 **완전히 같다**. 달라지는 것은
+     재측정 배점이 10점 미만일 때 판정 대신 '표본 부족'이 나오는 것뿐이며,
+     이는 얇은 표본으로 내리던 판정을 의도적으로 거둬들인 것이다.
+
+   반환에는 판정 외에 baseline(쓴 기준선)·baselinePooled(같은 자였는지)·
+   recheck(재측정 통계)·stored(저장된 판정인지)를 함께 담는다. */
+function prescriptionJudgment(p,records){
+  if(!p)return Object.assign(judgeOf('pending',null),{baseline:null,baselinePooled:false,
+    recheck:{rate:null,n:0,points:0,sessions:0},stored:false});
+  const since=p.created_at?String(p.created_at).slice(0,10):null;
+  const recheck=cellStatsSince(records,p.unit,p.cognition,since);
+  const pooled=p.baseline_rate_pooled!=null;
+  const baseline=pooled?Number(p.baseline_rate_pooled)
+    :(p.baseline_rate==null?null:Number(p.baseline_rate));
+  const extra={baseline,baselinePooled:pooled,recheck};
+  if(p.result)return Object.assign(judgeOf(p.result,p.result_delta),extra,{stored:true});
+  return Object.assign(judgePrescription(baseline,recheck.rate,recheck.points),extra,{stored:false});
 }
 
 /* ── 첨삭 총점 (신·구 형식 공용) ──
@@ -328,6 +407,7 @@ function admitBand(rd,u){if(rd==null)return {label:'-',cls:'gray',delta:0};
 export { ewma, computeReadiness, weightedRecent3, shortfallContribution, hwAccuracyAvg, hwTimeAvg,
          heatFromRecords, band, admitBand,
          sessionPercentRows, cohortSessionStats, standardizeWeekly,
-         cellRateSince, judgePrescription, essayTotals, essayRangeFor, PRESCRIPTION_DELTA,
+         cellRateSince, cellStatsSince, cellPooledRecent, judgePrescription, prescriptionJudgment,
+         essayTotals, essayRangeFor, PRESCRIPTION_DELTA, RECHECK_MIN_POINTS,
          hasEnoughSample, SAMPLE_GATE, pointShareFromRecords,
          scoreTags, errorAxisFromRecords, UNCLASSIFIED_TAG };

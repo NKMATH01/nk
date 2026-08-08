@@ -8,7 +8,8 @@ import {
   ewma, computeReadiness, weightedRecent3, shortfallContribution,
   hwAccuracyAvg, hwTimeAvg, band, admitBand,
   sessionPercentRows, cohortSessionStats, standardizeWeekly,
-  cellRateSince, judgePrescription, essayTotals, essayRangeFor,
+  cellRateSince, cellStatsSince, cellPooledRecent, judgePrescription, prescriptionJudgment,
+  essayTotals, essayRangeFor,
   heatFromRecords, hasEnoughSample, SAMPLE_GATE, pointShareFromRecords,
   scoreTags, errorAxisFromRecords,
 } from './calc.js';
@@ -289,6 +290,104 @@ t('경계 ±5%p 미만 변화는 정체(측정 잡음으로 본다)', () => {
 t('재측정 데이터가 없으면 대기', () => {
   assert.equal(judgePrescription(50, null).key, 'pending');
   assert.equal(judgePrescription(null, 60).key, 'pending');
+});
+
+console.log('처방 표본 게이트 · 기준선 추정량(0019)');
+t('cellStatsSince 는 rate 외에 표본(문항/배점/회차)을 함께 준다', () => {
+  const rec = [
+    { unit: '미분', cognition: '활용', points: 6, earned: 3, date: '2026-07-08' },
+    { unit: '미분', cognition: '활용', points: 4, earned: 4, date: '2026-07-15' },
+    { unit: '수열', cognition: '활용', points: 9, earned: 0, date: '2026-07-15' },   // 다른 셀
+  ];
+  const s = cellStatsSince(rec, '미분', '활용', '2026-07-01');
+  near(s.rate, 70); assert.equal(s.n, 2); near(s.points, 10); assert.equal(s.sessions, 2);
+});
+t('cellRateSince 는 cellStatsSince 의 rate 와 완전히 같다(래퍼)', () => {
+  const rec = [{ unit: '미분', cognition: '활용', points: 10, earned: 7, date: '2026-07-08' }];
+  assert.equal(cellRateSince(rec, '미분', '활용', null), cellStatsSince(rec, '미분', '활용', null).rate);
+  assert.equal(cellRateSince([], '미분', '활용', null), cellStatsSince([], '미분', '활용', null).rate);
+});
+t('재측정 배점이 10점 미만이면 판정하지 않고 표본 부족', () => {
+  // 배점 9점으로 +20%p 가 나와도 판정하지 않는다. delta 도 내보내지 않는다 —
+  // 판정하지 않기로 해 놓고 숫자를 보이면 그 숫자가 판정으로 읽힌다.
+  const j = judgePrescription(50, 70, 9);
+  assert.equal(j.key, 'insufficient');
+  assert.equal(j.delta, null);
+});
+t('재측정 배점 10점은 경계 포함 — 판정한다', () => {
+  assert.equal(judgePrescription(50, 70, 10).key, 'improved');
+});
+t('★ 배점을 넘기지 않으면 게이트를 적용하지 않는다(표본을 모르면 부족이라 말할 수 없다)', () => {
+  assert.equal(judgePrescription(50, 70).key, 'improved');
+  assert.equal(judgePrescription(50, 70, null).key, 'improved');
+});
+t('cellPooledRecent — 최근 3회 구간을 단순 배점 풀링으로 잰다(가중이 아니다)', () => {
+  const rec = [
+    { unit: '미분', cognition: '활용', points: 10, earned: 0, date: '2026-05-01' },  // 창 밖(4번째로 오래된 회차)
+    { unit: '미분', cognition: '활용', points: 10, earned: 10, date: '2026-06-01' },
+    { unit: '미분', cognition: '활용', points: 10, earned: 5,  date: '2026-06-08' },
+    { unit: '미분', cognition: '활용', points: 20, earned: 5,  date: '2026-06-15' },
+  ];
+  const p = cellPooledRecent(rec, '미분', '활용', 3);
+  near(p.rate, 50);           // (10+5+5)/(10+10+20) = 50. 최근 3회 가중이면 다른 값이 나온다
+  assert.equal(p.n, 3); near(p.points, 40); assert.equal(p.sessions, 3);
+});
+t('cellPooledRecent — 표본이 없으면 rate=null', () => {
+  assert.equal(cellPooledRecent([], '미분', '활용').rate, null);
+});
+
+console.log('prescriptionJudgment — 폴백 규약 · 저장된 판정 우선');
+const RX_REC = [
+  { unit: '미분', cognition: '활용', points: 20, earned: 4,  date: '2026-06-01' },  // 배정 전
+  { unit: '미분', cognition: '활용', points: 20, earned: 14, date: '2026-07-01' },  // 배정 후 → 70%
+];
+t('★ pooled 가 있으면 pooled 로 비교한다(재측정과 같은 자)', () => {
+  const j = prescriptionJudgment(
+    { unit: '미분', cognition: '활용', created_at: '2026-06-15', baseline_rate: 20, baseline_rate_pooled: 60 }, RX_REC);
+  assert.equal(j.baselinePooled, true);
+  near(j.baseline, 60); near(j.delta, 10); assert.equal(j.key, 'improved');
+});
+t('★ pooled 가 없는 과거 처방은 구 baseline_rate 로 폴백한다(개편 전과 같은 판정)', () => {
+  const p = { unit: '미분', cognition: '활용', created_at: '2026-06-15', baseline_rate: 20 };
+  const j = prescriptionJudgment(p, RX_REC);
+  assert.equal(j.baselinePooled, false);
+  near(j.baseline, 20);
+  // 개편 전 계산식과 한 글자도 다르지 않아야 한다
+  const legacy = judgePrescription(p.baseline_rate, cellRateSince(RX_REC, p.unit, p.cognition, '2026-06-15'));
+  assert.equal(j.key, legacy.key); near(j.delta, legacy.delta);
+});
+t('baseline_rate_pooled=0 은 값이 있는 것이다(0 과 null 을 구분한다)', () => {
+  const j = prescriptionJudgment(
+    { unit: '미분', cognition: '활용', created_at: '2026-06-15', baseline_rate: 90, baseline_rate_pooled: 0 }, RX_REC);
+  assert.equal(j.baselinePooled, true); near(j.baseline, 0); assert.equal(j.key, 'improved');
+});
+t('기준선이 아예 없으면 재측정이 있어도 대기', () => {
+  assert.equal(prescriptionJudgment({ unit: '미분', cognition: '활용', created_at: '2026-06-15' }, RX_REC).key, 'pending');
+});
+t('재측정 표본이 얇으면 표본 부족(과거 처방도 같은 게이트를 받는다)', () => {
+  const thin = [{ unit: '미분', cognition: '활용', points: 4, earned: 4, date: '2026-07-01' }];
+  const j = prescriptionJudgment({ unit: '미분', cognition: '활용', created_at: '2026-06-15', baseline_rate: 20 }, thin);
+  assert.equal(j.key, 'insufficient'); near(j.recheck.points, 4);
+});
+t('★ 판정 멱등 — result 가 있으면 저장값을 그대로 읽고 다시 계산하지 않는다', () => {
+  // 재측정 데이터는 '개선'을 가리키지만 저장된 판정은 '악화'다. 저장값이 이긴다 —
+  // 데이터가 더 쌓여도 그때 내린 판정이 흔들리면 기록이 아니다.
+  const j = prescriptionJudgment(
+    { unit: '미분', cognition: '활용', created_at: '2026-06-15', baseline_rate_pooled: 20,
+      result: 'worse', result_delta: -8 }, RX_REC);
+  assert.equal(j.key, 'worse'); assert.equal(j.stored, true); near(j.delta, -8);
+});
+t('저장된 판정은 재측정 표본이 얇아도 표본 부족으로 뒤집히지 않는다', () => {
+  const thin = [{ unit: '미분', cognition: '활용', points: 2, earned: 2, date: '2026-07-01' }];
+  const j = prescriptionJudgment(
+    { unit: '미분', cognition: '활용', created_at: '2026-06-15', baseline_rate_pooled: 20,
+      result: 'improved', result_delta: 30 }, thin);
+  assert.equal(j.key, 'improved'); assert.equal(j.stored, true);
+});
+t('알 수 없는 result 값은 대기로 떨어뜨린다(화면이 빈 칩을 그리지 않게)', () => {
+  const j = prescriptionJudgment(
+    { unit: '미분', cognition: '활용', created_at: '2026-06-15', baseline_rate_pooled: 20, result: 'zzz' }, RX_REC);
+  assert.equal(j.key, 'pending');
 });
 
 console.log('대학별 첨삭 실적 구간');

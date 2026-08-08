@@ -1,5 +1,5 @@
 /* 대시보드. 행 클릭 시 이동하는 navigate 는 순환 import 를 피하려고 app 을 경유한다. */
-import { band, cellRateSince, computeReadiness, heatFromRecords, judgePrescription, shortfallContribution } from '../calc.js';
+import { band, computeReadiness, heatFromRecords, prescriptionJudgment, shortfallContribution } from '../calc.js';
 import { COGNITIONS, UNITS } from '../config.js';
 import { db, loadContext, studentBundle } from '../db.js';
 import { svg } from '../icons.js';
@@ -100,13 +100,15 @@ async function renderDashboard(c){
       <span class="pill"><span class="dday">${ddayLabel(u.exam_date)}</span></span></div>`).join(''):'<p class="muted">등록된 고사일이 없습니다.</p>'}</div>`;
 
   const rxRows=activeRx.map(p=>{
-    const cur=cellRateSince(recById[p.student_id]||[],p.unit,p.cognition,p.created_at?String(p.created_at).slice(0,10):null);
-    const j=judgePrescription(p.baseline_rate,cur);
+    // 판정은 calc.js prescriptionJudgment 하나만 쓴다 — 화면마다 폴백을 다시 쓰면
+    // 같은 처방이 대시보드와 취약 진단에서 다르게 보인다.
+    const j=prescriptionJudgment(p,recById[p.student_id]||[]);
+    const cur=j.recheck.rate;
     const overdue=p.due_date&&daysUntil(p.due_date)<0;
     return `<tr data-sid="${esc(p.student_id)}" style="cursor:pointer">
       <td><b>${esc(nameById[p.student_id]||'-')}</b></td>
       <td>${esc(p.unit)} · ${esc(p.cognition)}</td>
-      <td class="num muted">${p.baseline_rate==null?'-':r1(p.baseline_rate)+'%'}</td>
+      <td class="num muted">${j.baseline==null?'-':r1(j.baseline)+'%'}</td>
       <td class="num">${cur==null?'<span class="muted">-</span>':r1(cur)+'%'}</td>
       <td><span class="chip ${j.cls}">${j.label}</span>${j.delta==null?'':` <span class="muted" style="font-size:11px">${j.delta>0?'+':''}${r1(j.delta)}%p</span>`}</td>
       <td class="muted">${p.due_date?esc(fmtDate(p.due_date))+(overdue?' <span class="chip red">기한 초과</span>':''):'-'}</td>

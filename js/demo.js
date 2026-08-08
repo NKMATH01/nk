@@ -171,6 +171,15 @@ function buildDemoStore(){
     due_date:'2026-07-25',note:'증감표 작성 후 개형 스케치 루틴화.',
     baseline_rate:61,status:'active',created_at:'2026-07-11'});
 
+  /* 학생 처방 실행 로그(0019). 최근 7일 중 며칠만 찍어 둔다 —
+     "매일 했는데 정답률이 그대로"와 "아예 안 했다"가 강사 화면에서 달라 보여야 한다.
+     날짜는 오늘 기준 상대값이라 데모를 언제 열어도 점 7개 안에 들어온다. */
+  const prescription_logs=[];
+  const dayBefore=n=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-n);
+    return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());};
+  [1,2,4,5,6].forEach(n=>prescription_logs.push({id:uuid(),prescription_id:prescriptions[0].id,
+    student_id:students[0].id,log_date:dayBefore(n),minutes:30,memo:null,created_at:dayBefore(n)}));
+
   // 문제은행 샘플 3건 — 공개/검토중/변형 상태를 각각 보여준다
   const problems=[];
   const pGacheon={id:uuid(),origin:'기출',parent_id:null,university_id:uByName('가천대')?.id||null,
@@ -242,7 +251,7 @@ function buildDemoStore(){
     admission_outcomes.push({id:uuid(),student_id:students[si].id,university_id:u.id,year:y,result:res,readiness_at:rd,band_at:bandLabel,note:null,created_at:'2026-02-01'});
   });
 
-  return {students,universities,student_targets,test_sessions,questions,scores,homework_records,essay_gradings,teacher_comments,counseling_notes,prescriptions,problems,problem_variants,univ_admission_stats,admission_outcomes,accounts:[]};
+  return {students,universities,student_targets,test_sessions,questions,scores,homework_records,essay_gradings,teacher_comments,counseling_notes,prescriptions,prescription_logs,problems,problem_variants,univ_admission_stats,admission_outcomes,accounts:[]};
 }
 
 export { buildDemoStore };

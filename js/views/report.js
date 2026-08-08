@@ -1,5 +1,5 @@
 /* 진행 현황 리포트 */
-import { cellRateSince, computeReadiness, heatFromRecords, hwAccuracyAvg, hwTimeAvg, judgePrescription, shortfallContribution } from '../calc.js';
+import { computeReadiness, heatFromRecords, hwAccuracyAvg, hwTimeAvg, prescriptionJudgment, shortfallContribution } from '../calc.js';
 import { COGNITIONS, TODAY, UNITS } from '../config.js';
 import { db, loadContext, studentBundle } from '../db.js';
 import { svg } from '../icons.js';
@@ -26,8 +26,8 @@ async function renderReport(c){
   const since=new Date(TODAY.getTime()-56*86400000);
   const sinceStr=since.getFullYear()+'-'+String(since.getMonth()+1).padStart(2,'0')+'-'+String(since.getDate()).padStart(2,'0');
   const rxRecent=rxAll.filter(p=>p.status!=='cancelled'&&String(p.created_at||'').slice(0,10)>=sinceStr);
-  const rxImproved=rxRecent.filter(p=>judgePrescription(p.baseline_rate,
-    cellRateSince(b.questionRecords,p.unit,p.cognition,String(p.created_at||'').slice(0,10))).key==='improved').length;
+  // 판정은 calc.js prescriptionJudgment 하나만 쓴다(취약 진단·대시보드와 같은 숫자여야 한다).
+  const rxImproved=rxRecent.filter(p=>prescriptionJudgment(p,b.questionRecords).key==='improved').length;
   const rxLine=rxRecent.length
     ? `최근 8주 처방 ${rxRecent.length}건 중 <b>${rxImproved}건 개선</b>${rxRecent.length>rxImproved?` · ${rxRecent.length-rxImproved}건은 정체·악화 또는 재측정 대기`:''}`
     : '최근 8주에 배정된 처방이 없습니다.';

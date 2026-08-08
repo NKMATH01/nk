@@ -222,8 +222,33 @@ const db={
     return await sbq(q,'처방 조회',[]);},
   async insertPrescription(p){if(app.DEMO){app.store.prescriptions.push(Object.assign({id:uuid(),status:'active',created_at:todayStr()},p));return;}
     const {error}=await app.sb.from('prescriptions').insert(p);if(error)throw error;},
+  /* status 는 **강사 전용**이다. 학생 경로에서 이 함수를 부르지 마라 —
+     학생이 강사의 작업 목록(active/done/cancelled)을 지우게 된다.
+     학생의 쓰기는 insertPrescriptionLog 하나뿐이다(0019 RLS 로도 막혀 있다). */
   async updatePrescriptionStatus(id,status){if(app.DEMO){const o=app.store.prescriptions.find(x=>x.id===id);if(o)o.status=status;return;}
     const {error}=await app.sb.from('prescriptions').update({status}).eq('id',id);if(error)throw error;},
+  /* 재측정 판정 확정 기록(0019). **한 번만** 쓴다.
+     ★ .is('result',null) — 이미 기록된 판정은 서버에서도 덮이지 않는다.
+       화면 렌더 중 조용히 호출되므로 렌더가 겹쳐도 첫 판정만 남아야 한다. */
+  async recordPrescriptionResult(id,result,delta){
+    if(app.DEMO){const o=app.store.prescriptions.find(x=>x.id===id);
+      if(o&&!o.result){o.result=result;o.result_delta=delta;o.result_recorded_at=new Date().toISOString();}return;}
+    const {error}=await app.sb.from('prescriptions')
+      .update({result,result_delta:delta,result_recorded_at:new Date().toISOString()})
+      .eq('id',id).is('result',null);
+    if(error)throw error;},
+
+  /* ── 처방 실행 로그(0019) — 학생이 직접 남기는 유일한 처방 기록 ──
+     학생 토큰으로는 insert·select 만 통과한다. update/delete 정책이 없다. */
+  async listPrescriptionLogs(sid){if(app.DEMO)return (app.store.prescription_logs||[]).filter(l=>!sid||l.student_id===sid).slice();
+    let q=app.sb.from('prescription_logs').select('*').order('log_date',{ascending:false});
+    if(sid)q=q.eq('student_id',sid);
+    return await sbq(q,'처방 실행 기록 조회',[]);},
+  async insertPrescriptionLog(row){
+    if(app.DEMO){const a=(app.store.prescription_logs=app.store.prescription_logs||[]);
+      if(a.find(l=>l.prescription_id===row.prescription_id&&l.log_date===row.log_date))return;   // unique 제약과 같은 동작
+      a.unshift(Object.assign({id:uuid(),created_at:new Date().toISOString()},row));return;}
+    const {error}=await app.sb.from('prescription_logs').insert(row);if(error)throw error;},
   /* private 버킷 파일 열람: 서버가 역할·소유를 확인하고 10분짜리 서명 URL 을 준다. */
   async getSignedPhotoUrl(path,bucket){if(app.DEMO)return null;
     const r=await apiFetch('/api/signed-url',{method:'POST',body:{path,bucket:bucket||'grading-photos'}});return r.signedUrl||null;},
