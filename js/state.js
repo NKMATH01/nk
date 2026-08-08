@@ -20,6 +20,10 @@ export const app = {
   testUI: { step: 1, sessionId: null },  // 주간테스트 화면 단계
   counselEdit: null,                     // 상담 기록 수정 중인 id
   essayEdit: null,                       // 첨삭 기록 수정 중인 id
+  /* 학생 관리에서 펼쳐 둔 학생 id. 저장·계정 생성이 카드 목록을 통째로 다시 그리므로
+     여기에 기억해 두지 않으면 편집하던 카드가 눈앞에서 접혀 버린다.
+     화면에 새로 들어올 때(renderStudents)만 비운다 — 기본은 전부 접힌 상태. */
+  stuOpen: new Set(),
 
   enterApp: null,                        // main.js 가 주입
   navigate: null,                        // main.js 가 주입
