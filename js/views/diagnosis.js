@@ -45,24 +45,27 @@ async function renderDiagnosis(c){
   const topReasonOf=(u,cg)=>{const m=cellReason[u+'|'+cg];if(!m)return null;return Object.entries(m).sort((a,b)=>b[1]-a[1])[0][0];};
 
   const gateText=`문항 ${SAMPLE_GATE.n}개 · 배점 ${SAMPLE_GATE.points}점 · 서로 다른 회차 ${SAMPLE_GATE.sessions}개`;
-  const heatTable=`<div style="overflow-x:auto"><table class="heat"><thead><tr><th class="unit">단원 \\ 사고</th>${COGNITIONS.map(cg=>`<th>${esc(cg)}</th>`).join('')}</tr></thead><tbody>
+  const heatTable=`<div class="tbl-wrap"><table class="heat"><thead><tr><th class="unit">단원 \\ 사고</th>${COGNITIONS.map(cg=>`<th>${esc(cg)}</th>`).join('')}</tr></thead><tbody>
     ${UNITS.map(u=>`<tr><th class="unit">${esc(u)}</th>${COGNITIONS.map(cg=>{const h=heat[u][cg];
       if(h.rate==null)return '<td class="cell none">-</td>';
       // 표본 미달은 숨기지 않는다 — 데이터가 없다는 사실 자체가 다음 출제에 주는 정보다.
-      if(!hasEnoughSample(h))return `<td class="cell none" style="font-size:11px;font-weight:600" title="표본 부족 — 문항 ${h.n}개 · 배점 ${r1(h.points)}점 · ${h.sessions}개 회차 (기준 ${esc(gateText)}). 정답률 ${r1(h.rate)}% 는 참고값이며 우선 보완 순위에서 제외됩니다.">표본 ${h.n}문항</td>`;
+      if(!hasEnoughSample(h))return `<td class="cell none thin" title="표본 부족 — 문항 ${h.n}개 · 배점 ${r1(h.points)}점 · ${h.sessions}개 회차 (기준 ${esc(gateText)}). 정답률 ${r1(h.rate)}% 는 참고값이며 우선 보완 순위에서 제외됩니다.">표본 ${h.n}문항</td>`;
       const cls=h.rate<40?'weak':(h.rate<70?'mid':'master');
       return `<td class="cell ${cls}" title="문항 ${h.n}개 · ${h.sessions}개 회차 · 최근3회 가중 정답률 ${r1(h.rate)}%">${Math.round(h.rate)}%</td>`;}).join('')}</tr>`).join('')}
     </tbody></table></div>`;
 
   const isAdmin=app.cur.role==='admin';
+  /* 1순위 강조는 **색·굵기·테두리**로만 준다(.rank-card.top).
+     종전에는 1순위에만 .card 를 달아 여백이 두 배가 됐고, 카드 높이가 2순위의 두 배였다.
+     위계는 유지하되 크기 차이는 없앤다 — 여백만 큰 카드는 정보가 아니라 소음이다. */
   const rankCards=ranked.length?ranked.map((r,i)=>{const tr=topReasonOf(r.unit,r.cognition);
-    return `<div class="${i===0?'card':''}" style="${i===0?'background:linear-gradient(135deg,#FBE9E9,#fff);border-color:#F3C9C9':'border:1px solid var(--line);border-radius:11px;padding:12px;margin-bottom:8px'}">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <div><span class="chip red">${i+1}순위</span> <b style="font-size:${i===0?'17px':'14px'}">${esc(r.unit)} · ${esc(r.cognition)}</b></div>
-        <div class="muted" style="font-size:12px">정답률 ${Math.round(r.rate)}% · 실점기여 ${(r.contrib*100).toFixed(1)}</div></div>
-      ${tr?`<div style="margin-top:6px;font-size:12.5px">최다 오답원인: <span class="chip amber">${esc(tr)}</span></div>`:''}
-      ${isAdmin?`<div style="margin-top:8px"><button class="btn line sm rx_open" data-unit="${esc(r.unit)}" data-cog="${esc(r.cognition)}" data-rate="${esc(r1(r.rate))}" data-error="${esc(tr||'')}">${svg('clipboardCheck','xs')}처방 배정</button>
-        <div class="rx_form" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--bg)"></div></div>`:''}
+    return `<div class="rank-card${i===0?' top':''}">
+      <div class="split wrap">
+        <div><span class="chip red">${i+1}순위</span> <b class="rank-name">${esc(r.unit)} · ${esc(r.cognition)}</b></div>
+        <div class="rank-meta">정답률 ${Math.round(r.rate)}% · 실점기여 ${(r.contrib*100).toFixed(1)}</div></div>
+      ${tr?`<div class="rank-reason">최다 오답원인: <span class="chip amber">${esc(tr)}</span></div>`:''}
+      ${isAdmin?`<div class="act-stack"><button class="btn line sm rx_open" data-unit="${esc(r.unit)}" data-cog="${esc(r.cognition)}" data-rate="${esc(r1(r.rate))}" data-error="${esc(tr||'')}">${svg('clipboardCheck','xs')}처방 배정</button>
+        <div class="rx_form panel sunken fold"></div></div>`:''}
     </div>`;}).join('')
     /* 초기에는 순위가 비거나 1~2개만 뜬다. 그게 옳다 — 없는 근거로 순위를 만들지 않는다.
        빈 자리에는 오류유형 축을 가리킨다(5축은 표본이 훨씬 빨리 찬다). */
@@ -87,7 +90,7 @@ async function renderDiagnosis(c){
     ?'<p class="muted">집계할 오류유형이 없습니다. [주간테스트] 채점 그리드의 태그 버튼(🏷)과 [첨삭 관리]의 문항별 채점기준이 쌓이면 자동으로 표시됩니다.</p>'
     :'<p class="muted">아직 집계된 오류유형이 없습니다. 주간테스트 채점과 첨삭이 끝나면 여기에 표시됩니다.</p>';
   const axisHead=axis.length
-    ?`<div style="font-size:17px;font-weight:800;margin-bottom:10px">${esc(axis[0].tag)} <span style="color:var(--red)">— ${esc(axisSpan)} ${r1(axis[0].lostPoints)}점 손실</span></div>`
+    ?`<div class="axis-head">${esc(axis[0].tag)} <span>— ${esc(axisSpan)} ${r1(axis[0].lostPoints)}점 손실</span></div>`
     :'';
   const axisBars=axis.length?axis.map(a=>`<div class="hbar-row" title="주간테스트 ${r1(a.sources.test)}점 · 첨삭 ${r1(a.sources.essay)}점 · 관측 ${a.n}건">
       <span>${esc(a.tag)}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.round(a.share*100)}%;background:var(--red)"></div></div>
@@ -98,13 +101,22 @@ async function renderDiagnosis(c){
     axis.untaggedLostPoints>0?`태그가 없는 주간테스트 실점 ${r1(axis.untaggedLostPoints)}점은 원인을 알 수 없어 제외했습니다.`:'',
   ].filter(Boolean).join(' ');
 
+  /* 캡션 원칙:
+       · **강사가 오해하면 안 되는 사실**(자동 집계다 / AI 판단이 아니다, 집계에서 뺀 것)은
+         접지 않고 그대로 보인다.
+       · 계산 방법·부연만 <details class="cap-more"> 로 접는다.
+     문구를 짧게 다듬되 사실관계는 하나도 빼지 않는다. */
   c.innerHTML=await studentSelector()+`
     <div class="card"><h3>${svg('target')}오류유형 진단 <span class="sub">${esc(axisSpan)} · 흘린 점수 기준</span></h3>
       ${axisHead}${axisBars}
-      <p class="muted" style="font-size:11.5px;margin-top:10px">주간테스트 오답원인 태그와 첨삭 채점기준(O/△/X)에서 잃은 점수를 합산한 <b>자동 집계</b>입니다(AI 판단이 아닙니다). 한 문항에 태그가 여럿이면 실점을 균등 분배합니다.${axisNotes?' '+esc(axisNotes):''}</p></div>
+      <p class="card-cap">주간테스트 오답원인 태그와 첨삭 채점기준에서 잃은 점수를 합산한 <b>자동 집계</b>입니다 — AI 판단이 아닙니다.${axisNotes?'<br>'+esc(axisNotes):''}</p>
+      <details class="cap-more"><summary>집계 방법</summary>
+        <div>첨삭은 채점기준별 O/△/X 기록에서 잃은 점수를 씁니다. 한 문항에 태그가 여럿이면 실점을 균등 분배합니다.</div></details></div>
     <div class="card"><h3>${svg('target')}우선 보완 순위 <span class="sub">표본 ${esc(gateText)} 이상인 셀만</span></h3>${rankCards}</div>
-    <div class="card"><h3>${svg('activity')}단원 × 사고과정 히트맵 <span class="sub">보조 지표 · 최근 3회 가중(50/30/20%) · 득점/배점 기반</span></h3>${heatTable}
-      <p class="muted" style="font-size:11.5px;margin-top:10px">색상: <span class="chip red">빨강 &lt;40</span> <span class="chip amber">주황 40~70</span> <span class="chip green">초록 ≥70</span> · 회색 <b>표본 N문항</b> 은 표본이 얇아 순위에서 제외한 셀입니다(정답률은 계산돼 있으며 셀에 마우스를 올리면 보입니다).</p></div>
+    <div class="card"><h3>${svg('activity')}단원 × 사고과정 히트맵 <span class="sub">보조 지표 · 최근 3회 가중(50/30/20%)</span></h3>${heatTable}
+      <p class="card-cap">색상 <span class="chip red">빨강 &lt;40</span> <span class="chip amber">주황 40~70</span> <span class="chip green">초록 ≥70</span> · 회색 <b>표본 N문항</b> 은 표본이 얇아 순위에서 제외한 셀입니다(정답률은 계산돼 있으며 셀에 마우스를 올리면 보입니다).</p>
+      <details class="cap-more"><summary>계산 기준</summary>
+        <div>득점/배점 기반이며 최근 3회에 50/30/20% 가중을 둡니다.</div></details></div>
     ${rxCard}`;
   bindStudentSelector(()=>renderDiagnosis(c));
 
@@ -179,25 +191,25 @@ function mountRxForm(wrap,target,sid,records,problems,refresh){
   const pooled=cellPooledRecent(records,target.unit,target.cognition,3);
   const thin=pooled.points>0&&pooled.points<RECHECK_MIN_POINTS;
   wrap.innerHTML=`
-    <div style="font-size:13px;font-weight:700;margin-bottom:6px">${esc(target.unit)} · ${esc(target.cognition)}
+    <div class="form-ttl">${esc(target.unit)} · ${esc(target.cognition)}
       ${target.prevId?'<span class="chip purple">후속 처방</span>':''}</div>
-    <div class="row" style="gap:6px;flex-wrap:wrap">
-      <div class="field" style="flex:1;min-width:130px"><label>오류유형 표적</label>
+    <div class="row">
+      <div class="field field-inline"><label>오류유형 표적</label>
         <select class="rx_err"><option value="">지정 안 함</option>${WRONG_REASONS.map(w=>`<option ${w===target.errorType?'selected':''}>${esc(w)}</option>`).join('')}</select></div>
-      <div class="field" style="flex:1;min-width:130px"><label>완료 기한</label><input type="date" class="rx_due"></div>
-      <div class="field" style="flex:1;min-width:130px"><label>재측정 시점</label><input type="date" class="rx_recheck" value="${esc(dayStr(RECHECK_DEFAULT_DAYS))}"></div>
+      <div class="field field-inline"><label>완료 기한</label><input type="date" class="rx_due"></div>
+      <div class="field field-inline"><label>재측정 시점</label><input type="date" class="rx_recheck" value="${esc(dayStr(RECHECK_DEFAULT_DAYS))}"></div>
     </div>
-    <div class="field" style="margin-top:6px"><label>배정 문항 <span class="muted" style="font-weight:400">공개(published) 상태인 같은 단원×사고과정 문항</span></label>
+    <div class="field"><label>배정 문항 <span class="lbl-hint">공개(published) 상태인 같은 단원×사고과정 문항</span></label>
       <div class="rx_probs"></div></div>
-    <div class="field" style="margin-top:6px;max-width:160px"><label>분량(문항 수)</label>
+    <div class="field" style="max-width:160px"><label>분량(문항 수)</label>
       <input type="number" class="rx_count" min="1" step="1" placeholder="선택 문항 수"></div>
-    <div class="field" style="margin-top:6px"><label>메모 <span class="muted" style="font-weight:400">선택</span></label>
-      <textarea class="rx_note" rows="2" style="width:100%;padding:8px;border:1.5px solid var(--line);border-radius:8px" placeholder="예: 조건 도식화부터 쓰고 풀 것"></textarea></div>
-    <div class="muted" style="font-size:11.5px;margin-top:4px">
+    <div class="field"><label>메모 <span class="lbl-hint">선택</span></label>
+      <textarea class="rx_note" rows="2" placeholder="예: 조건 도식화부터 쓰고 풀 것"></textarea></div>
+    <div class="card-cap tight">
       기준선 <b>${pooled.rate==null?'표본 없음':r1(pooled.rate)+'%'}</b>
       <span title="재측정(cellRateSince)과 같은 단순 배점 풀링으로 잰 값입니다. 히트맵의 최근 3회 가중값(${target.rate==null?'-':esc(r1(target.rate))}%)과는 자가 다릅니다.">(재측정과 같은 자 · 표본 ${pooled.n}문항 ${r1(pooled.points)}점)</span>
       ${thin?`<span class="chip amber">기준선 표본 ${r1(pooled.points)}점</span> 재측정 배점이 ${RECHECK_MIN_POINTS}점 미만이면 판정하지 않고 표본 부족으로 표시됩니다.`:''}</div>
-    <div style="margin-top:6px"><button class="btn sm rx_save">배정</button> <button class="btn line sm rx_cancel">취소</button></div>
+    <div class="act-row"><button class="btn sm rx_save">배정</button> <button class="btn line sm rx_cancel">취소</button></div>
     <div class="rx_msg msg"></div>`;
 
   const box=wrap.querySelector('.rx_probs');
@@ -207,11 +219,11 @@ function mountRxForm(wrap,target,sid,records,problems,refresh){
     const list=rxCandidates(problems,{unit:target.unit,cognition:target.cognition,errorType:errSel.value});
     /* 후보가 0건이어도 기능을 막지 않는다 — 문제은행이 비어 있는 것은 강사 잘못이 아니고,
        그 때문에 처방을 못 내리면 진단이 다시 관찰로 되돌아간다. note 만으로 배정할 수 있다. */
-    box.innerHTML=list.length?list.map(p=>`<label style="display:block;padding:5px 0;font-size:12.5px;border-bottom:1px solid var(--line)">
+    box.innerHTML=list.length?list.map(p=>`<label class="pick-row">
         <input type="checkbox" class="rx_pid" value="${esc(p.id)}" ${picked.has(p.id)?'checked':''}>
         ${p.errMatch?'<span class="chip amber">오류유형 일치</span> ':''}<span class="muted">난이도 ${p.difficulty==null?'-':esc(p.difficulty)} · 배점 ${p.points==null?'-':esc(p.points)}</span>
         ${p.body_latex?' '+esc(String(p.body_latex).slice(0,60)):' '+esc(p.source_citation||'(본문 없음)')}</label>`).join('')
-      :'<p class="muted" style="font-size:12px;margin:4px 0">연결할 문항이 없습니다. [문제은행]에 이 단원×사고과정의 공개 문항이 없습니다 — 아래 메모만으로 배정할 수 있습니다.</p>';
+      :'<p class="card-cap tight">연결할 문항이 없습니다. [문제은행]에 이 단원×사고과정의 공개 문항이 없습니다 — 아래 메모만으로 배정할 수 있습니다.</p>';
   };
   drawProblems();
   errSel.addEventListener('change',drawProblems);
@@ -253,8 +265,9 @@ function last7(logs,pid){
   return out;
 }
 function dotsHTML(days){
-  return `<span style="display:inline-flex;gap:3px;vertical-align:middle">${days.map(d=>
-    `<span title="${esc(d.date)}${d.done?' 실행함':''}" style="width:9px;height:9px;border-radius:50%;display:inline-block;background:${d.done?'var(--green)':'var(--line)'}"></span>`).join('')}</span>`;
+  // green = 실행함. 시맨틱 색 규약 그대로다(green=양호/이행).
+  return `<span class="dots">${days.map(d=>
+    `<i class="${d.done?'on':''}" title="${esc(d.date)}${d.done?' 실행함':''}"></i>`).join('')}</span>`;
 }
 // 후속 처방 사슬의 깊이. prev 를 따라 올라가며 센다(순환·유실 대비 상한 20).
 function attemptSeq(p,byId){
@@ -281,35 +294,35 @@ function rxCardHTML(list,records,logs,isAdmin){
     const statusChip=p.status==='done'?'<span class="chip blue">완료</span>'
       :p.status==='cancelled'?'<span class="chip gray">취소</span>':'<span class="chip green">진행 중</span>';
     const cur=j.recheck.rate;
-    return `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+    return `<div class="panel">
+      <div class="split wrap">
         <div><b>${esc(p.unit)} · ${esc(p.cognition)}</b>${p.error_type?` <span class="chip amber">${esc(p.error_type)}</span>`:''}
           ${seq>1?`<span class="chip purple">${seq}차 시도</span>`:''} ${statusChip}
           <span class="chip ${j.cls}">${j.label}</span>${j.stored?' <span class="chip gray" title="'+esc(fmtDate(p.result_recorded_at))+' 에 확정 기록된 판정입니다. 이후 데이터가 바뀌어도 다시 계산하지 않습니다.">확정</span>':''}</div>
-        <div class="muted" style="font-size:12px">기준 ${j.baseline==null?'-':r1(j.baseline)+'%'}
+        <div class="rank-meta">기준 ${j.baseline==null?'-':r1(j.baseline)+'%'}
           → ${cur==null?'재측정 없음':r1(cur)+'%'}${j.delta==null?'':' ('+(j.delta>0?'+':'')+r1(j.delta)+'%p)'}</div>
       </div>
-      ${j.key==='insufficient'?`<div class="muted" style="font-size:11.5px;margin-top:4px">재측정 표본이 ${r1(j.recheck.points)}점뿐입니다(${RECHECK_MIN_POINTS}점 이상 필요). 같은 단원×사고과정이 다음 회차에 출제되면 판정됩니다.</div>`:''}
-      ${!j.baselinePooled&&j.baseline!=null?'<div class="muted" style="font-size:11px;margin-top:2px" title="0019 이전에 배정된 처방입니다. 기준선은 최근 3회 가중, 재측정은 단순 배점 풀링이라 자가 다릅니다.">기준선이 구 방식(최근 3회 가중)입니다 — 참고용으로 보세요.</div>':''}
-      ${p.note?`<div class="muted" style="font-size:12.5px;margin-top:6px">${esc(p.note)}</div>`:''}
-      <div class="muted" style="font-size:11.5px;margin-top:4px">배정 ${esc(fmtDate(p.created_at))}${p.due_date?' · 기한 '+esc(fmtDate(p.due_date)):''}${p.recheck_after?' · 재측정 '+esc(fmtDate(p.recheck_after)):''}${
+      ${j.key==='insufficient'?`<div class="card-cap tight">재측정 표본이 ${r1(j.recheck.points)}점뿐입니다(${RECHECK_MIN_POINTS}점 이상 필요). 같은 단원×사고과정이 다음 회차에 출제되면 판정됩니다.</div>`:''}
+      ${!j.baselinePooled&&j.baseline!=null?'<div class="card-cap tight" title="0019 이전에 배정된 처방입니다. 기준선은 최근 3회 가중, 재측정은 단순 배점 풀링이라 자가 다릅니다.">기준선이 구 방식(최근 3회 가중)입니다 — 참고용으로 보세요.</div>':''}
+      ${p.note?`<div class="rx-note">${esc(p.note)}</div>`:''}
+      <div class="card-cap tight">배정 ${esc(fmtDate(p.created_at))}${p.due_date?' · 기한 '+esc(fmtDate(p.due_date)):''}${p.recheck_after?' · 재측정 '+esc(fmtDate(p.recheck_after)):''}${
         isAdmin&&p.problem_ids&&p.problem_ids.length?' · 배정 문항 '+p.problem_ids.length+'개':''}${
         p.target_count?' · 분량 '+esc(p.target_count)+'문항':''}</div>
-      <div class="muted" style="font-size:11.5px;margin-top:6px">최근 7일 ${dotsHTML(days)} <b>${doneDays}일</b> 실행</div>
-      ${isAdmin&&p.status==='active'?`<div style="margin-top:6px">
+      <div class="card-cap tight">최근 7일 ${dotsHTML(days)} <b>${doneDays}일</b> 실행</div>
+      ${isAdmin&&p.status==='active'?`<div class="act-row">
         <button class="btn line sm rx_status" data-id="${esc(p.id)}" data-to="done">완료 처리</button>
         <button class="btn line sm rx_status" data-id="${esc(p.id)}" data-to="cancelled">취소</button></div>`:''}
-      ${isAdmin&&(j.key==='worse'||j.key==='flat')?`<div style="margin-top:6px">
+      ${isAdmin&&(j.key==='worse'||j.key==='flat')?`<div class="act-stack">
         <button class="btn line sm rx_open" data-unit="${esc(p.unit)}" data-cog="${esc(p.cognition)}" data-rate="${p.baseline_rate==null?'':esc(r1(p.baseline_rate))}" data-error="${esc(p.error_type||'')}" data-prev="${esc(p.id)}">${svg('clipboardCheck','xs')}후속 처방 배정</button>
-        <div class="rx_form" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--bg)"></div></div>`:''}
-      ${!isAdmin&&p.status==='active'?`<div style="margin-top:6px">
-        ${app.preview?'<button class="btn sm" disabled>다 했어요</button> <span class="muted" style="font-size:11.5px">미리보기에서는 저장되지 않습니다</span>'
+        <div class="rx_form panel sunken fold"></div></div>`:''}
+      ${!isAdmin&&p.status==='active'?`<div class="act-row">
+        ${app.preview?'<button class="btn sm" disabled>다 했어요</button> <span class="card-cap tight">미리보기에서는 저장되지 않습니다</span>'
           :doneToday?'<button class="btn line sm" disabled>오늘 기록됨</button>'
           :`<button class="btn sm rx_done" data-id="${esc(p.id)}">다 했어요</button>`}</div>`:''}
     </div>`;}).join('');
-  return `<div class="card"><h3>${svg('clipboardCheck')}처방 · 재측정 <span class="sub">배정 이후 실시된 주간테스트로 자동 판정 (±5%p · 재측정 ${RECHECK_MIN_POINTS}점 이상)</span></h3>${rows}
-    ${isAdmin?`<p class="muted" style="font-size:11.5px;margin-top:6px">실행 일수와 판정을 <b>나란히</b> 봅니다 — "6일 했는데 정답률이 그대로"는 학생이 게으른 것이 아니라 <b>처방이 맞지 않는다</b>는 신호입니다. 그때는 [후속 처방 배정]으로 표적을 바꾸세요. (실행 기록은 학생이 직접 남기므로 실제 학습량과 다를 수 있습니다.)</p>`
-      :`<p class="muted" style="font-size:11.5px;margin-top:6px">[다 했어요]는 그날 처방을 했다는 기록만 남깁니다. 처방의 완료 여부는 선생님이 확인 후 처리합니다.</p>`}</div>`;
+  return `<div class="card"><h3>${svg('clipboardCheck')}처방 · 재측정 <span class="sub">배정 이후 주간테스트로 자동 판정 · ±5%p · 재측정 ${RECHECK_MIN_POINTS}점 이상</span></h3>${rows}
+    ${isAdmin?`<p class="card-cap">실행 일수와 판정을 <b>나란히</b> 봅니다 — "6일 했는데 정답률이 그대로"는 학생이 게으른 것이 아니라 <b>처방이 맞지 않는다</b>는 신호입니다. 그때는 [후속 처방 배정]으로 표적을 바꾸세요. (실행 기록은 학생이 직접 남기므로 실제 학습량과 다를 수 있습니다.)</p>`
+      :`<p class="card-cap">[다 했어요]는 그날 처방을 했다는 기록만 남깁니다. 처방의 완료 여부는 선생님이 확인 후 처리합니다.</p>`}</div>`;
 }
 
 export { renderDiagnosis };

@@ -46,7 +46,7 @@ function prefDateChoices(){
 async function renderParent(){
   $('loginView').style.display='none';$('appView').style.display='none';
   $('parentView').style.display='block';
-  $('pTop').innerHTML=app.DEMO?demoSwitchHTML('parent'):`<button class="btn sm line" id="pLogout" style="color:#fff;border-color:#3a4152;background:transparent">로그아웃</button>`;
+  $('pTop').innerHTML=app.DEMO?demoSwitchHTML('parent'):`<button class="btn sm line p-logout" id="pLogout">로그아웃</button>`;
   if(app.DEMO)bindDemoSwitch();else $('pLogout')?.addEventListener('click',doLogout);
   const wrap=$('parentWrap');wrap.innerHTML='<p class="muted">불러오는 중...</p>';
   const sid=app.cur.studentId;const ctx=await loadContext();const st=ctx.students.find(s=>s.id===sid);
@@ -82,29 +82,29 @@ async function renderParent(){
   const pCounsel=await db.listParentCounseling(sid);
 
   wrap.innerHTML=`
-    <div class="p-card"><div style="display:flex;justify-content:space-between;align-items:center">
-      <div><div class="muted" style="font-size:12px">주간 리포트</div><h2 style="margin:3px 0 0">${esc(st.name)}</h2><div class="muted" style="font-size:12px">${esc(st.grade_type)} · ${esc(st.school||'')}</div></div>
-      <select id="pWeek" style="padding:8px 10px;border:1.5px solid var(--line);border-radius:9px">${weeks.map(w=>`<option value="${w}" ${w===selWeek?'selected':''}>${w}주차</option>`).join('')||'<option>-</option>'}</select>
+    <div class="p-card"><div class="split">
+      <div><div class="p-eyebrow">주간 리포트</div><h2 class="p-name">${esc(st.name)}</h2><div class="p-sub">${esc(st.grade_type)} · ${esc(st.school||'')}</div></div>
+      <select id="pWeek" class="p-week">${weeks.map(w=>`<option value="${w}" ${w===selWeek?'selected':''}>${w}주차</option>`).join('')||'<option>-</option>'}</select>
     </div></div>
     <div class="p-card"><div class="p-kpi">
       <div class="b"><div class="l">회차 점수</div><div class="v">${curPct==null?'-':r1(curPct)+'%'}</div></div>
       <div class="b"><div class="l">직전 대비</div><div class="v">${delta==null?'-':(delta>=0?'+':'')+r1(delta)+'%p'}</div></div>
       <div class="b"><div class="l">과제 정답률</div><div class="v">${hwAcc==null?'-':r1(hwAcc)+'%'}</div></div>
-      <div class="b"><div class="l">과제 풀이시간</div><div class="v">${hwTime==null?'-':r1(hwTime)+'<span style="font-size:12px">분/회</span>'}</div></div>
+      <div class="b"><div class="l">과제 풀이시간</div><div class="v">${hwTime==null?'-':r1(hwTime)+'<span class="u">분/회</span>'}</div></div>
     </div></div>
-    <div class="p-card"><h3 style="margin:0 0 10px;font-size:14px">주간 점수 추이</h3><canvas id="pLine" height="150"></canvas></div>
-    <div class="p-card"><h3 style="margin:0 0 10px;font-size:14px">단원별 정답률</h3>
+    <div class="p-card"><h3>주간 점수 추이</h3><canvas id="pLine" height="150"></canvas></div>
+    <div class="p-card"><h3>단원별 정답률</h3>
       ${UNITS.map(u=>{const a=unitAgg[u];const p=a.p>0?Math.round(a.e/a.p*100):null;
         return `<div class="hbar-row"><span>${esc(u)}</span><div class="bar-track"><div class="bar-fill" style="width:${p||0}%;background:${p==null?'#ccc':(p<40?'var(--red)':p<70?'var(--amber)':'var(--green)')}"></div></div><span class="num">${p==null?'-':p+'%'}</span></div>`;}).join('')}</div>
-    <div class="p-card"><h3 style="margin:0 0 8px;font-size:14px">강사 코멘트</h3>
-      <div class="muted" style="font-size:13px;line-height:1.6">${comment?esc(comment.comment):'등록된 코멘트가 없습니다.'}</div></div>
+    <div class="p-card"><h3>강사 코멘트</h3>
+      <div class="prose muted">${comment?esc(comment.comment):'등록된 코멘트가 없습니다.'}</div></div>
     ${blockA(rxActive)}
     ${blockB(rxPast,b.questionRecords)}
     ${blockParentCounsel(pCounsel)}
     ${blockC(selWeek,acked,openReq)}
-    <div class="p-card"><h3 style="margin:0 0 10px;font-size:14px">목표 대학 · D-day</h3>
+    <div class="p-card"><h3>목표 대학 · D-day</h3>
       ${targets.length?targets.map(t=>{const u=ctx.universities.find(x=>x.id===t.university_id);if(!u)return '';
-        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--line-2)"><span>${t.priority}지망 <b>${esc(u.name)}</b></span>${u.exam_date?`<span class="pill"><span class="dday">${ddayLabel(u.exam_date)}</span></span>`:'<span class="muted">미정</span>'}</div>`;}).join(''):'<p class="muted">등록된 목표 대학이 없습니다.</p>'}</div>
+        return `<div class="split list-row"><span>${t.priority}지망 <b>${esc(u.name)}</b></span>${u.exam_date?`<span class="pill"><span class="dday">${ddayLabel(u.exam_date)}</span></span>`:'<span class="muted">미정</span>'}</div>`;}).join(''):'<p class="muted">등록된 목표 대학이 없습니다.</p>'}</div>
     <div class="p-card note-blue">본 리포트는 학습 관리용 참고 자료이며 합격을 보장하지 않습니다.</div>`;
   $('pWeek')?.addEventListener('change',e=>{app.state.reportWeek=Number(e.target.value);renderParent();});
   bindParentActions(sid,selWeek);
@@ -121,14 +121,14 @@ async function renderParent(){
    ★ 정답률·기준선 숫자는 여기 넣지 않는다 — 진행 중인 것은 아직 결과가 아니다. */
 function blockA(rxActive){
   const body=rxActive.length
-    ?rxActive.map(p=>`<div style="padding:8px 0;border-bottom:1px solid var(--line-2)">
+    ?rxActive.map(p=>`<div class="list-row">
         <b>${esc(p.unit||'')}${p.cognition?' · '+esc(p.cognition):''}</b>
         ${p.error_type?` <span class="pill">${esc(p.error_type)}</span>`:''}
-        ${p.note?`<div class="muted" style="font-size:12.5px;margin-top:2px">${esc(p.note)}</div>`:''}
-        ${p.due_date?`<div class="muted" style="font-size:11.5px;margin-top:2px">기한 ${esc(fmtDate(p.due_date))}</div>`:''}
+        ${p.note?`<div class="rx-note">${esc(p.note)}</div>`:''}
+        ${p.due_date?`<div class="card-cap tight">기한 ${esc(fmtDate(p.due_date))}</div>`:''}
       </div>`).join('')
-    :'<p class="muted" style="font-size:13px;margin:0">현재 배정된 보완 과제가 없습니다.</p>';
-  return `<div class="p-card"><h3 style="margin:0 0 8px;font-size:14px">지금 하고 있는 것</h3>${body}</div>`;
+    :'<p class="p-empty">현재 배정된 보완 과제가 없습니다.</p>';
+  return `<div class="p-card"><h3>지금 하고 있는 것</h3>${body}</div>`;
 }
 
 /* ── B. 지난 처방 결과 ──
@@ -144,14 +144,14 @@ function blockB(rxPast,records){
     const arrow=(j.baseline!=null&&cur!=null)
       ?`기준 ${r1(j.baseline)}% → 재측정 ${r1(cur)}%`
       :(j.baseline!=null?`기준 ${r1(j.baseline)}%`:'기준값 없음');
-    return `<div style="padding:8px 0;border-bottom:1px solid var(--line-2)">
+    return `<div class="list-row">
       <div><b>${esc(p.unit||'')}${p.cognition?' · '+esc(p.cognition):''}</b> <span class="chip ${j.cls}">${esc(j.label)}</span></div>
-      <div class="muted" style="font-size:12.5px;margin-top:2px">${esc(arrow)}${j.delta==null?'':` (${j.delta>0?'+':''}${r1(j.delta)}%p)`}</div>
-      ${j.key==='insufficient'?'<div class="muted" style="font-size:11.5px">재측정 문항이 아직 적어 판정하지 않았습니다.</div>':''}
-      ${j.key==='pending'?'<div class="muted" style="font-size:11.5px">아직 재측정 회차가 실시되지 않았습니다.</div>':''}
+      <div class="rx-note">${esc(arrow)}${j.delta==null?'':` (${j.delta>0?'+':''}${r1(j.delta)}%p)`}</div>
+      ${j.key==='insufficient'?'<div class="card-cap tight">재측정 문항이 아직 적어 판정하지 않았습니다.</div>':''}
+      ${j.key==='pending'?'<div class="card-cap tight">아직 재측정 회차가 실시되지 않았습니다.</div>':''}
     </div>`;}).join('');
-  return `<div class="p-card"><h3 style="margin:0 0 8px;font-size:14px">지난 보완 과제 결과</h3>${rows}
-    <div class="muted" style="font-size:11.5px;margin-top:6px">보완 과제를 배정한 뒤 실시된 주간테스트에서 같은 유형의 문항만 다시 모아 비교한 값입니다.</div></div>`;
+  return `<div class="p-card"><h3>지난 보완 과제 결과</h3>${rows}
+    <div class="card-cap">보완 과제를 배정한 뒤 실시된 주간테스트에서 같은 유형의 문항만 다시 모아 비교한 값입니다.</div></div>`;
 }
 
 /* 학부모 상담 기록 — 강사가 [학생에게 공개]로 표시한 '학부모상담' 건만.
@@ -160,12 +160,12 @@ function blockB(rxPast,records){
      transcript·ai_draft·audio_path 는 조회 자체를 하지 않는다. */
 function blockParentCounsel(notes){
   if(!notes||!notes.length)return '';
-  const rows=notes.slice(0,5).map(n=>`<div style="padding:8px 0;border-bottom:1px solid var(--line-2)">
-      <div class="muted" style="font-size:11.5px">${esc(fmtDate(n.note_date))}</div>
-      <div style="font-size:13px;white-space:pre-wrap;line-height:1.6">${esc(n.content)}</div>
-      ${n.follow_up?`<div class="muted" style="font-size:12px;margin-top:4px"><b>후속</b> · ${esc(n.follow_up)}</div>`:''}
+  const rows=notes.slice(0,5).map(n=>`<div class="list-row">
+      <div class="card-cap tight">${esc(fmtDate(n.note_date))}</div>
+      <div class="prose">${esc(n.content)}</div>
+      ${n.follow_up?`<div class="card-cap tight"><b>후속</b> · ${esc(n.follow_up)}</div>`:''}
     </div>`).join('');
-  return `<div class="p-card"><h3 style="margin:0 0 8px;font-size:14px">상담 기록</h3>${rows}</div>`;
+  return `<div class="p-card"><h3>상담 기록</h3>${rows}</div>`;
 }
 
 /* ── C. 개입 2개 ──
@@ -174,27 +174,27 @@ function blockC(selWeek,acked,openReq){
   // 미리보기(원장이 학부모 화면을 열어 본 상태)에서는 쓰기 버튼을 잠근다 —
   // 여기서 누르면 **진짜 학부모 확인 기록·상담 요청**이 만들어진다(db.js 에서도 한 번 더 막는다).
   const pv=!!app.preview;
-  const pvNote='<div class="muted" style="font-size:11.5px;margin-top:6px">미리보기에서는 저장되지 않습니다.</div>';
+  const pvNote='<div class="card-cap">미리보기에서는 저장되지 않습니다.</div>';
   const ackBox=selWeek==null?''
     :acked
-      ?`<div class="pill" style="display:inline-block">${selWeek}주차 리포트 확인함 · ${esc(fmtDate(acked.acked_at))}</div>`
+      ?`<div class="pill">${selWeek}주차 리포트 확인함 · ${esc(fmtDate(acked.acked_at))}</div>`
       :`<button class="btn" id="pAck" ${pv?'disabled':''}>${selWeek}주차 리포트 확인했습니다</button>
-         ${pv?pvNote:'<div class="muted" style="font-size:11.5px;margin-top:6px">확인하셨다는 표시만 남습니다. 답장이 필요하지 않습니다.</div>'}`;
+         ${pv?pvNote:'<div class="card-cap">확인하셨다는 표시만 남습니다. 답장이 필요하지 않습니다.</div>'}`;
   const reqBox=openReq
-    ?`<div class="pill" style="display:inline-block">상담 요청 ${esc(REQ_STATUS_LABEL[openReq.status]||'접수됨')}</div>
-       <div class="muted" style="font-size:11.5px;margin-top:6px">희망일 ${
+    ?`<div class="pill">상담 요청 ${esc(REQ_STATUS_LABEL[openReq.status]||'접수됨')}</div>
+       <div class="card-cap">희망일 ${
          (Array.isArray(openReq.pref_dates)?openReq.pref_dates:[]).map(d=>esc(fmtDate(d))).join(' / ')||'미지정'} · 원장이 확인 후 연락드립니다.</div>`
-    :`<div class="field" style="margin-bottom:8px"><label style="font-size:12px">상담 유형</label>
-        <select id="pReqCat" ${pv?'disabled':''} style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px">${COUNSEL_REQ_CATS.map(k=>`<option>${esc(k)}</option>`).join('')}</select></div>
-      <div class="field"><label style="font-size:12px">희망 날짜 (최대 3개)</label>
-        ${[0,1,2].map(i=>`<select class="pReqDate" data-i="${i}" ${pv?'disabled':''} style="width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;margin-bottom:6px">
+    :`<div class="field"><label>상담 유형</label>
+        <select id="pReqCat" ${pv?'disabled':''}>${COUNSEL_REQ_CATS.map(k=>`<option>${esc(k)}</option>`).join('')}</select></div>
+      <div class="field"><label>희망 날짜 (최대 3개)</label>
+        ${[0,1,2].map(i=>`<select class="pReqDate" data-i="${i}" ${pv?'disabled':''}>
             <option value="">선택 안 함</option>${prefDateChoices().map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join('')}</select>`).join('')}</div>
       <button class="btn" id="pReqGo" ${pv?'disabled':''}>상담 요청 보내기</button>
-      ${pv?pvNote:'<div class="muted" style="font-size:11.5px;margin-top:6px">희망 날짜와 유형만 보냅니다. 자세한 이야기는 상담 때 직접 나눕니다.</div>'}`;
-  return `<div class="p-card"><h3 style="margin:0 0 8px;font-size:14px">확인 · 상담 요청</h3>
-    <div style="margin-bottom:12px">${ackBox}</div>
-    <div style="border-top:1px dashed var(--line);padding-top:12px">${reqBox}</div>
-    <div id="pActMsg" class="msg" style="font-size:12px"></div></div>`;
+      ${pv?pvNote:'<div class="card-cap">희망 날짜와 유형만 보냅니다. 자세한 이야기는 상담 때 직접 나눕니다.</div>'}`;
+  return `<div class="p-card"><h3>확인 · 상담 요청</h3>
+    <div class="p-act">${ackBox}</div>
+    <div class="p-act-sep">${reqBox}</div>
+    <div id="pActMsg" class="msg"></div></div>`;
 }
 
 function bindParentActions(sid,selWeek){

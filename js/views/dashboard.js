@@ -141,28 +141,35 @@ async function renderDashboard(c){
     if(d>0.05)return `<span class="delta up">${svg('arrowUp','xs')}${r1(Math.abs(d))}</span>`;
     if(d<-0.05)return `<span class="delta down">${svg('arrowDown','xs')}${r1(Math.abs(d))}</span>`;
     return '<span class="delta flat">0</span>';};
-  const tbl=`<div class="card"><h3>${svg('users')}학생 현황 <span class="sub">행을 클릭하면 취약 진단으로 이동합니다</span></h3>
+  /* 학생 현황 표.
+     ★ 이름·학년·목표대학은 **절대 줄바꿈되면 안 된다**(td.nw). 종전에는 열이 좁아지면
+       "장유/이", "고/3" 처럼 갈라져 읽을 수가 없었다. 열이 모자라면 셀을 접는 대신
+       .tbl-wrap 이 가로로 스크롤한다.
+     ★ 취약 1순위 칩은 문구가 길다(단원·사고과정). 문구를 줄이면 의미가 사라지므로
+       말줄임(.chip.clip)으로 한 줄에 넣고 전체는 title 로 남긴다. */
+  const tbl=`<div class="card"><h3>${svg('users')}학생 현황 <span class="sub">행 클릭 → 취약 진단</span></h3>
     ${readinessFormulaHTML()}
-    <div style="overflow-x:auto"><table><thead><tr>
+    <div class="tbl-wrap"><table><thead><tr>
       <th>학생</th><th>학년</th><th>목표(1지망)</th><th class="num">최근점수</th><th class="num">증감</th><th class="num">준비도</th><th>밴드</th><th class="num">진도 커버리지</th><th>취약 1순위</th><th>이번주</th><th>최근 상담일</th>
     </tr></thead><tbody>
-    ${rows.map(r=>`<tr data-sid="${esc(r.st.id)}" style="cursor:pointer">
-      <td><b>${esc(r.st.name)}</b></td><td>${esc(r.st.grade_type)}</td>
-      <td>${r.uni?esc(r.uni.name):'<span class="muted">미설정</span>'}</td>
+    ${rows.map(r=>{const weakTxt=r.weak?r.weak.unit+'·'+r.weak.cognition:'';
+      return `<tr data-sid="${esc(r.st.id)}" class="rowlink">
+      <td class="nw"><b>${esc(r.st.name)}</b></td><td class="nw">${esc(r.st.grade_type)}</td>
+      <td class="nw">${r.uni?esc(r.uni.name):'<span class="muted">미설정</span>'}</td>
       <td class="num">${r.lastPct==null?'-':r1(r.lastPct)+'%'}</td>
       <td class="num">${deltaHTML(r.delta)}</td>
       <td class="num"><b>${r.readiness==null?'-':r1(r.readiness)+'%'}</b></td>
-      <td>${r.readiness==null?'<span class="chip gray">N/A</span>':bandChip(r.readiness)}</td>
+      <td class="nw">${r.readiness==null?'<span class="chip gray">N/A</span>':bandChip(r.readiness)}</td>
       <td class="num muted">${r.coverage==null?'-':Math.round(r.coverage)+'%'}</td>
-      <td>${r.weak?`<span class="chip red">${esc(r.weak.unit)}·${esc(r.weak.cognition)}</span>`:'<span class="muted">-</span>'}</td>
-      <td>${r.entered?'<span class="chip green">완료</span>':'<span class="chip amber">미입력</span>'}</td>
-      <td class="muted">${r.lastCounsel?esc(fmtDate(r.lastCounsel)):'-'}</td>
-    </tr>`).join('')}
+      <td>${r.weak?`<span class="chip red clip" title="${esc(weakTxt)}">${esc(weakTxt)}</span>`:'<span class="muted">-</span>'}</td>
+      <td class="nw">${r.entered?'<span class="chip green">완료</span>':'<span class="chip amber">미입력</span>'}</td>
+      <td class="muted nw">${r.lastCounsel?esc(fmtDate(r.lastCounsel)):'-'}</td>
+    </tr>`;}).join('')}
     </tbody></table></div></div>`;
 
   const sched=`<div class="card"><h3>${svg('calendar')}다가오는 논술고사</h3>
-    ${upcoming.length?upcoming.slice(0,8).map(u=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 2px;border-bottom:1px solid var(--line-2)">
-      <div><b>${esc(u.name)}</b>${u.campus?` <span class="muted">(${esc(u.campus)})</span>`:''} <span class="muted" style="font-size:11.5px">${esc(fmtDate(u.exam_date))}</span></div>
+    ${upcoming.length?upcoming.slice(0,8).map(u=>`<div class="split list-row">
+      <div><b>${esc(u.name)}</b>${u.campus?` <span class="muted">(${esc(u.campus)})</span>`:''} <span class="muted">${esc(fmtDate(u.exam_date))}</span></div>
       <span class="pill"><span class="dday">${ddayLabel(u.exam_date)}</span></span></div>`).join(''):'<p class="muted">등록된 고사일이 없습니다.</p>'}</div>`;
 
   const rxRows=activeRx.map(p=>{
@@ -171,16 +178,16 @@ async function renderDashboard(c){
     const j=prescriptionJudgment(p,recById[p.student_id]||[]);
     const cur=j.recheck.rate;
     const overdue=p.due_date&&daysUntil(p.due_date)<0;
-    return `<tr data-sid="${esc(p.student_id)}" style="cursor:pointer">
-      <td><b>${esc(nameById[p.student_id]||'-')}</b></td>
-      <td>${esc(p.unit)} · ${esc(p.cognition)}</td>
+    return `<tr data-sid="${esc(p.student_id)}" class="rowlink">
+      <td class="nw"><b>${esc(nameById[p.student_id]||'-')}</b></td>
+      <td class="nw">${esc(p.unit)} · ${esc(p.cognition)}</td>
       <td class="num muted">${j.baseline==null?'-':r1(j.baseline)+'%'}</td>
       <td class="num">${cur==null?'<span class="muted">-</span>':r1(cur)+'%'}</td>
-      <td><span class="chip ${j.cls}">${j.label}</span>${j.delta==null?'':` <span class="muted" style="font-size:11px">${j.delta>0?'+':''}${r1(j.delta)}%p</span>`}</td>
-      <td class="muted">${p.due_date?esc(fmtDate(p.due_date))+(overdue?' <span class="chip red">기한 초과</span>':''):'-'}</td>
+      <td class="nw"><span class="chip ${j.cls}">${j.label}</span>${j.delta==null?'':` <span class="muted">${j.delta>0?'+':''}${r1(j.delta)}%p</span>`}</td>
+      <td class="muted nw">${p.due_date?esc(fmtDate(p.due_date))+(overdue?' <span class="chip red">기한 초과</span>':''):'-'}</td>
     </tr>`;}).join('');
-  const rxCard=`<div class="card"><h3>${svg('clipboardCheck')}진행 중 처방 <span class="sub">배정 이후 실시된 주간테스트로 자동 판정 · 행 클릭 시 취약 진단으로 이동</span></h3>
-    ${activeRx.length?`<div style="overflow-x:auto"><table><thead><tr>
+  const rxCard=`<div class="card"><h3>${svg('clipboardCheck')}진행 중 처방 <span class="sub">배정 이후 주간테스트로 자동 판정 · 행 클릭 → 취약 진단</span></h3>
+    ${activeRx.length?`<div class="tbl-wrap"><table><thead><tr>
       <th>학생</th><th>보완 대상</th><th class="num">기준선</th><th class="num">재측정</th><th>판정</th><th>기한</th>
     </tr></thead><tbody>${rxRows}</tbody></table></div>`
     :'<p class="muted">진행 중인 처방이 없습니다. [취약 진단]에서 배정하세요.</p>'}</div>`;
@@ -197,8 +204,10 @@ async function renderDashboard(c){
        대시보드 위쪽에 둔다 — 요청이 쌓이는데 아무도 모르는 상태가 되면 안 된다. */
   const reqCard=app.cur.role==='admin'?await counselReqCardHTML(ctx):'';
 
-  c.innerHTML=kpi+'<div style="height:16px"></div>'+reqCard
-    +`<div class="grid2" style="grid-template-columns:1.7fr 1fr">${tbl}${sched}</div>`+ungradedCard+rxCard;
+  /* 표 열이 11개라 왼쪽 칸을 넉넉히 준다 — 1.7fr 에서는 이름·학년까지 접혔다(.grid-main).
+     그래도 모자라면 .tbl-wrap 이 가로 스크롤한다(셀을 접지 않는다). */
+  c.innerHTML=kpi+'<div class="kpi-gap"></div>'+reqCard
+    +`<div class="grid2 grid-main">${tbl}${sched}</div>`+ungradedCard+rxCard;
   bindCounselReqCard(c);
   c.querySelectorAll('tr[data-sid]').forEach(tr=>tr.addEventListener('click',()=>{app.cur.studentId=tr.dataset.sid;app.navigate('diagnosis');}));
   // 미채점 제출 행 → 해당 회차의 채점 그리드로. 라우팅 관례는 renderSessions 의 [문항/채점] 버튼과 같다.
@@ -227,18 +236,18 @@ async function ungradedCardHTML(ctx,rows,nameById){
       return {sub:s,q,ss,elapsed:-(daysUntil(fmtDate(s.submitted_at))||0)};})
     .sort((a,b)=>b.elapsed-a.elapsed);   // 오래 방치된 것부터
 
-  const body=pend.length?`<div style="overflow-x:auto"><table><thead><tr>
+  const body=pend.length?`<div class="tbl-wrap"><table><thead><tr>
       <th>학생</th><th>문항</th><th>제출일</th><th class="num">경과</th>
     </tr></thead><tbody>
-    ${pend.slice(0,20).map(p=>`<tr data-goq="${esc(p.ss.id)}" data-go-student="${esc(p.sub.student_id)}" style="cursor:pointer">
-      <td><b>${esc(nameById[p.sub.student_id])}</b></td>
-      <td>${esc(p.ss.week_no)}주차 ${esc(p.q.no)}번 <span class="muted">${esc(p.q.unit||'')}</span></td>
-      <td class="muted">${esc(fmtDate(p.sub.submitted_at))}</td>
+    ${pend.slice(0,20).map(p=>`<tr data-goq="${esc(p.ss.id)}" data-go-student="${esc(p.sub.student_id)}" class="rowlink">
+      <td class="nw"><b>${esc(nameById[p.sub.student_id])}</b></td>
+      <td class="nw">${esc(p.ss.week_no)}주차 ${esc(p.q.no)}번 <span class="muted">${esc(p.q.unit||'')}</span></td>
+      <td class="muted nw">${esc(fmtDate(p.sub.submitted_at))}</td>
       <td class="num"><span class="chip ${p.elapsed>=7?'red':(p.elapsed>=3?'amber':'gray')}">${p.elapsed}일</span></td>
     </tr>`).join('')}
-    </tbody></table></div>${pend.length>20?`<p class="muted" style="font-size:11.5px;margin-top:6px">외 ${pend.length-20}건</p>`:''}`
+    </tbody></table></div>${pend.length>20?`<p class="card-cap">외 ${pend.length-20}건</p>`:''}`
     :'<p class="muted">미채점 제출이 없습니다.</p>';
-  return `<div class="card"><h3>${svg('clock')}미채점 제출 <span class="sub">학생이 올린 답안 중 아직 점수가 확정되지 않은 것 · 행 클릭 시 채점 그리드로 이동</span></h3>${body}</div>`;
+  return `<div class="card"><h3>${svg('clock')}미채점 제출 <span class="sub">학생이 올린 답안 중 점수가 확정되지 않은 것 · 행 클릭 → 채점 그리드</span></h3>${body}</div>`;
 }
 
 /* ── 학부모 상담 요청 카드 (관리자 전용) ──
@@ -257,19 +266,19 @@ async function counselReqCardHTML(ctx){
     const m=REQ_STATUS[r.status]||REQ_STATUS.open;
     const dates=(Array.isArray(r.pref_dates)?r.pref_dates:[]).map(d=>fmtDate(d)).filter(Boolean);
     return `<tr>
-      <td><b>${esc(nameById[r.student_id]||'-')}</b> <span class="muted" style="font-size:11.5px">학부모</span></td>
-      <td>${esc(r.category||'-')}</td>
-      <td>${dates.length?dates.map(d=>`<span class="chip gray">${esc(d)}</span>`).join(' '):'<span class="muted">희망일 없음</span>'}</td>
-      <td class="muted">${esc(fmtDate(r.created_at))}</td>
-      <td><span class="chip ${m.cls}">${m.label}</span></td>
-      <td>${r.status==='open'?`<button class="btn line sm cr_set" data-id="${esc(r.id)}" data-st="scheduled">일정 잡음</button> `:''}
+      <td class="nw"><b>${esc(nameById[r.student_id]||'-')}</b> <span class="muted">학부모</span></td>
+      <td class="nw">${esc(r.category||'-')}</td>
+      <td class="nw">${dates.length?dates.map(d=>`<span class="chip gray">${esc(d)}</span>`).join(' '):'<span class="muted">희망일 없음</span>'}</td>
+      <td class="muted nw">${esc(fmtDate(r.created_at))}</td>
+      <td class="nw"><span class="chip ${m.cls}">${m.label}</span></td>
+      <td class="nw">${r.status==='open'?`<button class="btn line sm cr_set" data-id="${esc(r.id)}" data-st="scheduled">일정 잡음</button> `:''}
         <button class="btn line sm cr_set" data-id="${esc(r.id)}" data-st="done">완료</button></td>
     </tr>`;}).join('');
   return `<div class="card"><h3>${svg('chat')}학부모 상담 요청 <span class="sub">희망 날짜 후보와 유형만 옵니다 · 상세는 상담에서 듣습니다</span></h3>
-    <div style="overflow-x:auto"><table><thead><tr>
+    <div class="tbl-wrap"><table><thead><tr>
       <th>대상</th><th>유형</th><th>희망 날짜</th><th>요청일</th><th>상태</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="muted" style="font-size:11.5px;margin-top:6px">상태는 관리자만 바꿀 수 있습니다(학부모 계정에는 수정 권한이 없습니다).</div></div>`;
+    <div class="card-cap">상태는 관리자만 바꿀 수 있습니다(학부모 계정에는 수정 권한이 없습니다).</div></div>`;
 }
 function bindCounselReqCard(c){
   c.querySelectorAll('.cr_set').forEach(b=>b.addEventListener('click',async ev=>{

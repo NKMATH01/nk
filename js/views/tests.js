@@ -183,7 +183,7 @@ async function renderScoreGrid(body,c){
   if(!questions.length){body.innerHTML='<div class="card"><p class="muted">먼저 [문항 정의]에서 문항을 저장하세요.</p></div>';return;}
   if(!students.length){body.innerHTML='<div class="card"><p class="muted">재원 학생이 없습니다.</p></div>';return;}
 
-  const head=`<thead><tr><th class="corner">학생 \\ 문항</th>${questions.map(q=>`<th><span class="qno">${q.no}</span><span class="qmeta">${esc(q.unit.slice(0,4))}·${esc(q.cognition)}</span><span class="qmeta">${q.points}점</span></th>`).join('')}<th class="corner" style="left:auto;position:sticky;right:0">합계</th></tr></thead>`;
+  const head=`<thead><tr><th class="corner">학생 \\ 문항</th>${questions.map(q=>`<th><span class="qno">${q.no}</span><span class="qmeta">${esc(q.unit.slice(0,4))}·${esc(q.cognition)}</span><span class="qmeta">${q.points}점</span></th>`).join('')}<th class="corner right">합계</th></tr></thead>`;
   const rowsHTML=students.map((st,ri)=>`<tr><th class="stu">${esc(st.name)}</th>${questions.map((q,ci)=>{
     const sc=scMap[q.id+'|'+st.id];const val=sc?sc.earned:'';const tag=sc&&sc.wrong_reason?sc.wrong_reason:'';const note=sc&&sc.reason_note?sc.reason_note:'';const photo=sc&&sc.photo_url?sc.photo_url:'';
     const ded=sc&&sc.deduction_checks?JSON.stringify(sc.deduction_checks):'';   // 감점 체크 상태(셀 재편집 시 복원용)
@@ -194,8 +194,8 @@ async function renderScoreGrid(body,c){
   const footHTML=`<tfoot><tr><th class="corner">문항 정답률</th>${questions.map((q,ci)=>`<td data-colrate="${ci}">-</td>`).join('')}<td></td></tr></tfoot>`;
   body.innerHTML=`<div class="card"><h3>${svg('grid')}${sess.week_no}주차 채점 <span class="sub">셀에 득점 입력 · 방향키 이동 · 태그 버튼으로 오답원인</span></h3>
     <div class="gridwrap"><table class="score-grid">${head}<tbody>${rowsHTML}</tbody>${footHTML}</table></div>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
-      <div class="muted" style="font-size:12px">부분점수 허용(0~배점). 범위 밖은 빨강 표시.</div>
+    <div class="grid-foot">
+      <div class="card-cap tight">부분점수 허용(0~배점). 범위 밖은 빨강 표시.</div>
       <button class="btn gold" id="gridSave">${svg('check','sm')}전체 저장</button></div>
     <div id="gridMsg" class="msg"></div></div>`;
 
