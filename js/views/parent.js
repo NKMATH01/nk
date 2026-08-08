@@ -6,6 +6,9 @@ import { db, loadContext, studentBundle } from '../db.js';
 import { app } from '../state.js';
 import { bindDemoSwitch, demoSwitchHTML, destroyCharts } from '../ui.js';
 import { $, ddayLabel, esc, fmtDate, r1, todayStr } from '../util.js';
+// 상담 유형 칩 색과 공개 본문 규칙은 상담 화면과 **같은 것**을 쓴다. 여기서 다시 정의하면
+// 유형이 늘거나 폴백 규칙이 바뀔 때 학부모 화면만 조용히 뒤처진다.
+import { COUNSEL_CLS, counselPublicBody } from './counseling.js';
 
 /* ═══════════════════════════════════════════════════════════════════
    학부모 화면 (모바일 단일 스크롤)
@@ -26,6 +29,8 @@ import { $, ddayLabel, esc, fmtDate, r1, todayStr } from '../util.js';
    · 상담 전사문(transcript) · ai_draft · 미확정 AI 판단
        확정 전 문장은 강사의 판단이 아니다. db.listParentCounseling 은 컬럼
        화이트리스트(js/db.js COUNSEL_SAFE_COLS)로 이들을 아예 받지 않는다.
+       상담 카드에 보이는 문장은 public_text(강사가 확정한 공개용 문장)이거나
+       content(강사가 쓴 확정 내용)뿐이다 — AI 가 만든 문장이 그대로 오는 길은 없다.
    · 답안 원본 사진
        "여기 왜 감점이죠"가 문항 단위로 온다. 8명을 혼자 보는 지금은 감당 못 한다.
    ═══════════════════════════════════════════════════════════════════ */
@@ -154,18 +159,33 @@ function blockB(rxPast,records){
     <div class="card-cap">보완 과제를 배정한 뒤 실시된 주간테스트에서 같은 유형의 문항만 다시 모아 비교한 값입니다.</div></div>`;
 }
 
-/* 학부모 상담 기록 — 강사가 [학생에게 공개]로 표시한 '학부모상담' 건만.
-   지금까지 학부모는 자기 상담 기록조차 볼 수 없었다.
-   ★ 컬럼은 학생 경로와 같은 화이트리스트를 쓴다(js/db.js listParentCounseling).
-     transcript·ai_draft·audio_path 는 조회 자체를 하지 않는다. */
+/* 학부모 상담 기록 — 강사가 [학생·학부모에게 공개] 로 표시한 상담 **전부**.
+   유형(정기상담·진로상담…)으로 거르지 않는다. 잘 정돈해 둔 상담이 유형이 안 맞는다는
+   이유로 안 보이는 일이 없어야 한다(원장 결정. js/db.js listParentCounseling 참고).
+
+   ★ 본문은 counselPublicBody 하나로 정한다 — 학생 화면과 **같은 문장**이 보여야 한다.
+     public_text(강사 확정)가 있으면 그것, 없으면 content 로 폴백한다.
+   ★ 컬럼은 학생 경로와 같은 화이트리스트를 쓴다(js/db.js COUNSEL_SAFE_COLS).
+     transcript·ai_draft·audio_path 는 조회 자체를 하지 않는다 — 이 파일 머리의
+     "절대 넣지 않는 것" 목록 그대로다.
+   ★ 최근 3건만 펼쳐 두고 나머지는 접는다. 모바일 단일 스크롤이라 상담이 쌓일수록
+     아래 카드(목표 대학·확인/상담 요청)가 화면 밖으로 밀려난다. 접되 **숨기지는
+     않는다** — 남은 건수를 요약줄에 적어 무엇이 접혀 있는지 보이게 한다. */
+const P_COUNSEL_OPEN=3;
+function counselRow(n){
+  return `<div class="list-row">
+      <div class="split wrap"><span class="chip ${COUNSEL_CLS[n.category]||'gray'}">${esc(n.category||'상담')}</span>
+        <span class="card-cap tight">${esc(fmtDate(n.note_date))}</span></div>
+      <div class="prose">${esc(counselPublicBody(n))}</div>
+      ${n.follow_up?`<div class="card-cap tight"><b>후속 조치</b> · ${esc(n.follow_up)}</div>`:''}
+    </div>`;
+}
 function blockParentCounsel(notes){
   if(!notes||!notes.length)return '';
-  const rows=notes.slice(0,5).map(n=>`<div class="list-row">
-      <div class="card-cap tight">${esc(fmtDate(n.note_date))}</div>
-      <div class="prose">${esc(n.content)}</div>
-      ${n.follow_up?`<div class="card-cap tight"><b>후속</b> · ${esc(n.follow_up)}</div>`:''}
-    </div>`).join('');
-  return `<div class="p-card"><h3>상담 기록</h3>${rows}</div>`;
+  const head=notes.slice(0,P_COUNSEL_OPEN),rest=notes.slice(P_COUNSEL_OPEN);
+  return `<div class="p-card"><h3>상담 기록</h3>${head.map(counselRow).join('')}
+    ${rest.length?`<details class="wk-note" style="margin-top:var(--sp-2)"><summary>지난 상담 ${rest.length}건 더 보기</summary>${rest.map(counselRow).join('')}</details>`:''}
+    <div class="card-cap">원장이 공개로 표시한 상담만 보입니다. 녹음 원본과 AI 초안은 담기지 않습니다.</div></div>`;
 }
 
 /* ── C. 개입 2개 ──

@@ -10,6 +10,13 @@ import { $, esc, fmtDate, todayStr } from '../util.js';
    ═══════════════════════════════════════════════════════════════════ */
 const COUNSEL_CATS=['정기상담','학부모상담','진로·지원상담','기타'];
 const COUNSEL_CLS={'정기상담':'blue','학부모상담':'purple','진로·지원상담':'green','기타':'gray'};
+/* 학생·학부모 화면에 보이는 본문 한 줄 규칙 — **두 화면이 같은 문장을 봐야 한다.**
+   public_text(강사가 확정한 공개용 문장)가 있으면 그것, 없으면 content 로 폴백한다.
+   ★ 폴백을 빼지 마라. public_text 는 0021 에서 생긴 컬럼이라 그 전에 쌓인 상담 기록에는
+     전부 비어 있다. 폴백이 없으면 공개 표시된 과거 상담이 화면에서 통째로 사라진다.
+   ★ ai_draft.student_safe_text 는 여기에 들어오지 않는다. 그건 강사가 확인하지 않았을 수
+     있는 초안이고, 애초에 조회 화이트리스트(js/db.js COUNSEL_SAFE_COLS)에 없다. */
+const counselPublicBody=n=>String(n.public_text||'').trim()||String(n.content||'').trim();
 /* 실제 상담은 15~20분이다. 서버(api/counsel-transcribe.js)가 10MB 이하는 인라인,
    그 위는 Gemini Files API 로 올리므로 여기서는 100MB 까지 받는다.
    20분이면 휴대폰 기본 128kbps AAC 라도 약 19MB 라 한참 여유가 있다. */
@@ -47,11 +54,11 @@ function draftBox(n){
       <div style="white-space:pre-wrap;margin-top:2px">${esc(d.summary||'')}</div></div>
     <div style="font-size:12.5px;margin-top:6px"><b>주요 논점</b>${list(d.key_points)}</div>
     <div style="font-size:12.5px;margin-top:6px"><b>후속 조치 후보</b>${list(d.follow_ups)}</div>
-    <div style="font-size:12.5px;margin-top:6px"><b>학생 공개용 문장</b>
+    <div style="font-size:12.5px;margin-top:6px"><b>공개용 문장 (학부모·학생)</b>
       <div style="white-space:pre-wrap;margin-top:2px">${safe?esc(safe):'<span class="muted">(공개할 만한 문장이 없다고 판단됨)</span>'}</div></div>
     <div class="row" style="margin-top:8px">
       <button class="btn sm cd_take" data-id="${esc(n.id)}">초안 가져오기</button>
-      ${safe?`<button class="btn line sm cd_safe" data-id="${esc(n.id)}">학생 공개용 문장 쓰기</button>`:''}
+      ${safe?`<button class="btn line sm cd_safe" data-id="${esc(n.id)}">공개용 문장 가져오기</button>`:''}
     </div>
     <div class="muted" style="font-size:11px;margin-top:6px">가져온 뒤 고치고 [수정 저장]을 눌러야 기록에 남습니다. 유형은 제안일 뿐이니 폼에서 직접 고르세요.</div>
   </div>`;
@@ -174,7 +181,7 @@ async function renderCounseling(c){
     :((!ai||!ai.configured)?'AI 기능 미설정 — GEMINI_API_KEY 가 등록되지 않았습니다.':'');
 
   const timeline=notes.length?notes.map(n=>`<div class="timeline-item">
-      <div class="th"><div><span class="chip ${COUNSEL_CLS[n.category]||'gray'}">${esc(n.category)}</span> <span class="muted" style="font-size:12px;margin-left:6px">${esc(fmtDate(n.note_date))}</span>${n.visible_to_student?' <span class="chip green">학생 공개</span>':''}${n.ai_status?' '+aiChip(n):''}${n.audio_path?' <span title="녹음 있음">🎧</span>':(n.audio_purged_at?' <span class="muted" style="font-size:11.5px">음성 삭제됨</span>':'')}</div>
+      <div class="th"><div><span class="chip ${COUNSEL_CLS[n.category]||'gray'}">${esc(n.category)}</span> <span class="muted" style="font-size:12px;margin-left:6px">${esc(fmtDate(n.note_date))}</span>${n.visible_to_student?' <span class="chip green">학생·학부모 공개</span>':''}${n.ai_status?' '+aiChip(n):''}${n.audio_path?' <span title="녹음 있음">🎧</span>':(n.audio_purged_at?' <span class="muted" style="font-size:11.5px">음성 삭제됨</span>':'')}</div>
         <div><button class="btn line sm cn_edit" data-id="${esc(n.id)}">수정</button>${n.audio_path?` <button class="btn line sm cn_purge" data-id="${esc(n.id)}" title="음성 원본만 지웁니다. 전사문과 상담 기록은 남습니다.">음성 삭제 (되돌릴 수 없음)</button>`:''} <button class="btn danger sm cn_del" data-id="${esc(n.id)}">삭제</button></div></div>
       <div style="font-size:13.5px;white-space:pre-wrap;line-height:1.6">${esc(n.content)}</div>
       ${n.follow_up?`<div style="margin-top:8px;padding:8px 10px;background:var(--bg);border-radius:8px;font-size:12.5px"><b>후속 조치</b> · ${esc(n.follow_up)}</div>`:''}
@@ -234,7 +241,12 @@ async function renderCounseling(c){
       </div>
       <div class="field" style="margin-top:8px"><label>상담 내용</label><textarea id="cn_content" rows="3" style="padding:9px 11px;border:1.5px solid var(--line);border-radius:9px">${editing?esc(editing.content):''}</textarea></div>
       <div class="field"><label>후속 조치(선택)</label><textarea id="cn_follow" rows="2" style="padding:9px 11px;border:1.5px solid var(--line);border-radius:9px">${editing&&editing.follow_up?esc(editing.follow_up):''}</textarea></div>
-      <div class="field" style="margin-top:2px"><label style="display:flex;align-items:center;gap:7px;cursor:pointer"><input type="checkbox" id="cn_visible" ${editing&&editing.visible_to_student?'checked':''}> 학생에게 공개</label></div>
+      <div class="field" style="margin-top:2px"><label style="display:flex;align-items:center;gap:7px;cursor:pointer"><input type="checkbox" id="cn_visible" ${editing&&editing.visible_to_student?'checked':''}> 학생·학부모에게 공개</label>
+        <div class="card-cap tight">체크하면 <b>학생 화면과 학부모 화면</b> 양쪽에 이 기록이 보입니다(유형과 무관합니다). 나가는 것은 날짜·유형·아래 <b>공개용 문장</b>(비어 있으면 상담 내용)·후속 조치뿐이며, <b>녹음 전사문과 AI 초안은 나가지 않습니다.</b></div></div>
+      <div class="field" id="cn_pubwrap"><label>학부모·학생 공개용 문장 (선택)</label>
+        <textarea id="cn_public" rows="3" style="padding:9px 11px;border:1.5px solid var(--line);border-radius:9px">${editing&&editing.public_text?esc(editing.public_text):''}</textarea>
+        <div class="card-cap tight">비워 두면 위의 <b>상담 내용</b>이 그대로 보입니다. 상담 내용에 다른 학생·가정사 같은 이야기가 섞였을 때 여기에 따로 적으세요. AI 초안이 있으면 이력의 [공개용 문장 가져오기] 로 채운 뒤 고칠 수 있습니다.</div>
+        <div class="card-cap tight" id="cn_puboff" style="display:none;color:var(--amber)">지금은 [학생·학부모에게 공개] 가 꺼져 있어 이 문장은 아무에게도 보이지 않습니다.</div></div>
       <button class="btn" id="cn_save">${svg('check','sm')}${editing?'수정 저장':'기록 저장'}</button>
       ${editing?'<button class="btn line" id="cn_cancel">취소</button>':''}
       <div id="cn_msg" class="msg"></div>
@@ -263,11 +275,29 @@ async function renderCounseling(c){
       ?'m4a·mp4 는 전사가 되지 않는 경우가 있습니다(실측). 그대로 올려도 되지만, 실패하면 형식 때문일 수 있으니 wav·webm·mp3 로 다시 올려 주세요.':'';
   });
 
+  /* 공개 체크가 꺼져 있으면 공개용 문장 칸은 아무 데도 쓰이지 않는다 — 흐리게 하고
+     그 사실을 적어 둔다. 값은 지우지 않는다(체크를 다시 켜면 그대로 살아야 한다). */
+  const syncPubVisible=()=>{
+    const cb=$('cn_visible'),w=$('cn_pubwrap'),off=$('cn_puboff');
+    if(!cb||!w)return;
+    w.style.opacity=cb.checked?'':'.55';
+    if(off)off.style.display=cb.checked?'none':'';
+  };
+  $('cn_visible')?.addEventListener('change',syncPubVisible);
+  syncPubVisible();
+
   $('cn_save').addEventListener('click',async()=>{
     const m=$('cn_msg');m.className='msg';m.textContent='';
     const content=$('cn_content').value.trim();
     if(!content){m.className='msg err';m.textContent='상담 내용을 입력하세요.';return;}
-    const payload={note_date:$('cn_date').value,category:$('cn_cat').value,content,follow_up:$('cn_follow').value.trim()||null,visible_to_student:$('cn_visible').checked};
+    /* public_text 는 **강사가 확정한** 공개 문장이다. 빈 칸은 null 로 저장하고,
+       학부모·학생 화면은 그때 content 로 폴백한다(js/views/parent.js·renderStudentCounsel).
+       이 폴백이 없으면 public_text 가 비어 있는 **지금까지의 상담 기록이 전부**
+       학부모 화면에서 사라진다. AI 초안이 이 값으로 자동으로 들어오는 경로는 없다 —
+       강사가 [공개용 문장 가져오기] 로 폼에 채우고 다시 저장해야 한다. */
+    const payload={note_date:$('cn_date').value,category:$('cn_cat').value,content,
+      public_text:$('cn_public').value.trim()||null,
+      follow_up:$('cn_follow').value.trim()||null,visible_to_student:$('cn_visible').checked};
     /* confirmed_at 은 30일 음성 자동 삭제(3차 counsel-purge)의 카운트 기준점이다.
        조건 없이 일괄로 찍는다 — 녹음에서 온 행만 찍으면 '찍히지 않은 행'이 다시 생기고,
        수기 기록은 audio_path 가 없어 애초에 purge 대상이 아니라 무해하다.
@@ -321,19 +351,26 @@ async function renderCounseling(c){
     if(m){m.className='msg';m.textContent='초안을 폼에 넣었습니다. 확인·수정한 뒤 [수정 저장]을 누르세요. 유형은 AI 제안을 참고해 직접 고르시면 됩니다.';}
   }));
 
-  /* [학생 공개용 문장 쓰기] — 내용 필드를 **덮지 않고** 뒤에 덧붙인다.
-     학생 공개 체크박스는 건드리지 않는다. 공개 여부는 강사가 정할 일이라,
-     버튼 하나로 학생에게 보이는 상태가 되면 안 된다. */
+  /* [공개용 문장 가져오기] — 초안의 student_safe_text 를 **공개용 문장 칸에만** 채운다.
+     ★ 이 버튼은 상담 기록 화면에 하나뿐이다. 종전에는 같은 버튼이 이 문장을 상담 내용
+       뒤에 덧붙였는데, 공개용 문장을 담을 자리(public_text, 0021)가 생겼으므로 그쪽으로
+       옮긴다 — 버튼을 새로 만들지 않는다(같은 일을 하는 버튼이 둘이면 안 된다).
+     ★ 채우기만 한다. 저장은 강사가 [수정 저장] 을 눌러야 일어난다(2단계). AI 초안이
+       강사 확인 없이 확정 필드로 가는 경로를 만들지 않는다는 원칙 그대로다.
+     ★ 공개 체크박스는 건드리지 않는다. 공개 여부는 강사가 정할 일이라,
+       버튼 하나로 학생·학부모에게 보이는 상태가 되면 안 된다. */
   c.querySelectorAll('.cd_safe').forEach(b=>b.addEventListener('click',async()=>{
     const n=notes.find(x=>x.id===b.dataset.id);if(!n||!n.ai_draft)return;
     const t=String(n.ai_draft.student_safe_text||'').trim();if(!t)return;
     app.counselEdit=n.id;
     await renderCounseling(c);
-    const ta=$('cn_content');if(!ta)return;
-    const cur=ta.value.trim();
-    ta.value=(cur?cur+'\n\n':'')+'[학생 공개용]\n'+t;
+    const ta=$('cn_public');if(!ta)return;
+    const had=!!ta.value.trim();
+    ta.value=t;
     const m=$('cn_msg');
-    if(m){m.className='msg';m.textContent='학생 공개용 문장을 내용 뒤에 덧붙였습니다. 학생에게 보이게 하려면 [학생에게 공개]를 체크하고 저장하세요.';}
+    if(m){m.className='msg';
+      m.textContent=(had?'공개용 문장 칸에 있던 값을 초안으로 바꿨습니다. ':'초안의 공개용 문장을 폼에 넣었습니다. ')
+        +'확인·수정한 뒤 [수정 저장]을 눌러야 기록에 남습니다. 학부모·학생에게 보이려면 [학생·학부모에게 공개]도 체크하세요.';}
   }));
 }
 
@@ -447,16 +484,20 @@ async function uploadAndTranscribe(c,sid,stu,blob,ext,fromRec){
 
 /* 학생 화면: 공개된 상담 내역만 읽기 전용 표시.
    ★ listCounseling(select('*')) 을 쓰지 마라 — transcript·ai_draft·audio_path 가
-     응답에 통째로 실려 학생에게 내려간다. RLS 는 행 단위라 이를 막지 못한다. */
+     응답에 통째로 실려 학생에게 내려간다. RLS 는 행 단위라 이를 막지 못한다.
+   ★ 본문은 public_text(강사가 확정한 공개용 문장)를 우선하고, 비어 있으면 content 로
+     폴백한다. 폼의 체크박스가 [학생·학부모에게 공개] 라고 적혀 있으므로 학부모 화면과
+     같은 문장이 보여야 한다. 폴백이 없으면 public_text 를 쓰지 않은 지금까지의
+     기록이 학생 화면에서 통째로 사라진다. */
 async function renderStudentCounsel(c){
   const sid=app.cur.studentId;if(!sid){c.innerHTML='<p class="muted">학생 정보를 찾을 수 없습니다.</p>';return;}
   const notes=await db.listStudentCounseling(sid);
   const list=notes.length?notes.map(n=>`<div class="timeline-item">
       <div class="th"><div><span class="chip ${COUNSEL_CLS[n.category]||'gray'}">${esc(n.category)}</span> <span class="muted" style="font-size:12px;margin-left:6px">${esc(fmtDate(n.note_date))}</span></div></div>
-      <div style="font-size:13.5px;white-space:pre-wrap;line-height:1.6">${esc(n.content)}</div>
+      <div style="font-size:13.5px;white-space:pre-wrap;line-height:1.6">${esc(counselPublicBody(n))}</div>
       ${n.follow_up?`<div style="margin-top:8px;padding:8px 10px;background:var(--bg);border-radius:8px;font-size:12.5px"><b>후속</b> · ${esc(n.follow_up)}</div>`:''}
     </div>`).join(''):'<p class="muted">공개된 상담 내역이 없습니다.</p>';
   c.innerHTML=`<div class="card"><h3>${svg('chat')}상담 내역</h3>${list}</div>`;
 }
 
-export { COUNSEL_CATS, COUNSEL_CLS, renderCounseling, renderStudentCounsel };
+export { COUNSEL_CATS, COUNSEL_CLS, counselPublicBody, renderCounseling, renderStudentCounsel };

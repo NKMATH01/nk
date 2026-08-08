@@ -86,6 +86,10 @@ async function removeCounselAudio(path){
    ★ 여기에 컬럼을 더하지 마라. counseling_notes 의 학생용 RLS(stu_self)는 행 단위라
      컬럼을 가려 주지 못한다. transcript(전사문 원문)·ai_draft(미확정 AI 초안)·
      audio_path 가 이 목록에 섞이면 그대로 학생·학부모 응답에 실려 나간다.
+   public_text(0021)만 예외로 들어와 있다. 이유는 **확정값**이기 때문이다 —
+     강사가 화면에서 확인·수정하고 저장한 문장이라 그대로 나가도 된다.
+     반대로 ai_draft 는 그 안에 student_safe_text 가 들어 있어도 여전히 넣지 않는다.
+     그건 강사가 본 적 없을 수 있는 초안이다(구분은 0021 주석에 적어 두었다).
    학생 경로(listStudentCounseling)와 학부모 경로(listParentCounseling)가 같은 값을
    쓰도록 한 곳에 둔다 — 한쪽만 넓히는 실수가 나오지 않게. */
 /* ★ 미리보기 쓰기 차단 (이중 방어) ────────────────────────────────
@@ -98,8 +102,7 @@ async function removeCounselAudio(path){
    관리자 쓰기는 미리보기에서 애초에 도달할 수 없으므로(학생·학부모 메뉴에 없다) 건드리지 않는다. */
 function blockIfPreview(){if(app.preview)throw new Error('미리보기에서는 저장되지 않습니다.');}
 
-const COUNSEL_SAFE_COLS='id,note_date,category,content,follow_up,visible_to_student';
-const PARENT_COUNSEL_CAT='학부모상담';
+const COUNSEL_SAFE_COLS='id,note_date,category,content,public_text,follow_up,visible_to_student';
 const pickCounselCols=n=>Object.fromEntries(COUNSEL_SAFE_COLS.split(',').map(k=>[k,n[k]]));
 
 const db={
@@ -170,19 +173,25 @@ const db={
       .map(pickCounselCols).sort((a,b)=>a.note_date<b.note_date?1:-1);
     return await sbq(app.sb.from('counseling_notes').select(COUNSEL_SAFE_COLS).eq('student_id',sid)
       .eq('visible_to_student',true).order('note_date',{ascending:false}),'상담 기록 조회',[]);},
-  /* 학부모 경로 전용 — 지금까지 학부모는 자기 상담 기록조차 볼 수 없었다.
+  /* 학부모 경로 전용.
      ★ 컬럼은 학생 경로와 **같은 화이트리스트**(COUNSEL_SAFE_COLS)를 쓴다.
        transcript(전사문 원문)·ai_draft(미확정 AI 초안)·audio_path 가 새면 안 된다.
-     게이트가 둘이다: 유형이 '학부모상담' 이고 **그 위에** 강사가 공개로 표시한 건만.
+     게이트는 **하나**다 — 강사가 [학생·학부모에게 공개] 로 표시한 행만.
+       종전에는 category='학부모상담' 조건이 하나 더 있었으나 걷어냈다(원장 결정).
+       정기상담·진로상담을 아무리 잘 정돈해도 유형이 안 맞으면 학부모에게 보이지
+       않았고, 그래서 "공개 체크를 했는데 왜 안 보이냐"가 반복됐다.
      RLS(0006 stu_self)도 visible_to_student=true 만 통과시키므로 서버·클라이언트
      양쪽에서 같은 조건이 걸린다. 필터는 전부 PostgREST 쪽에 건다 — 클라이언트
-     filter 는 응답이 이미 브라우저에 도착한 뒤라 유출을 막지 못한다. */
+     filter 는 응답이 이미 브라우저에 도착한 뒤라 유출을 막지 못한다.
+     ★ 지금 이 함수의 조건은 listStudentCounseling 과 **완전히 같다.** 그래도 하나로
+       합치지 않는다. 언젠가 한쪽만 넓히거나 좁히게 될 때, 합쳐 두면 다른 쪽이
+       조용히 따라가 버린다 — 두 화면은 보는 사람이 다르다. */
   async listParentCounseling(sid){
     if(app.DEMO)return app.store.counseling_notes
-      .filter(n=>n.student_id===sid&&n.visible_to_student&&n.category===PARENT_COUNSEL_CAT)
+      .filter(n=>n.student_id===sid&&n.visible_to_student)
       .map(pickCounselCols).sort((a,b)=>a.note_date<b.note_date?1:-1);
     return await sbq(app.sb.from('counseling_notes').select(COUNSEL_SAFE_COLS).eq('student_id',sid)
-      .eq('visible_to_student',true).eq('category',PARENT_COUNSEL_CAT)
+      .eq('visible_to_student',true)
       .order('note_date',{ascending:false}),'상담 기록 조회',[]);},
   /* 대시보드가 학생별 '최근 상담일' 하나만 쓴다(js/views/dashboard.js).
      ★ select('*') 로 두지 마라. renderDashboard 에는 역할 가드가 없고 라우터 맵은
