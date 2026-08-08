@@ -36,9 +36,13 @@ const FORBIDDEN = [
   { re: /반드시|틀림없이|장담/, why: "단정 표현" },
 ];
 
-function findForbidden(text){
+/* 목록을 인자로 받는다. 기본값은 위의 리포트용 FORBIDDEN 이다.
+   상담 초안(api/counsel-draft.js)은 **같은 검사기에 다른 목록**을 넘겨 쓴다 —
+   금지 대상이 글의 성격마다 다르기 때문이다(그쪽 COUNSEL_FORBIDDEN 주석 참고).
+   검사 로직을 복제하지 않으려고 목록만 밖으로 뺐다. */
+function findForbidden(text, list){
   const t = String(text || "");
-  for(const f of FORBIDDEN){ if(f.re.test(t)) return f.why; }
+  for(const f of (list || FORBIDDEN)){ if(f.re.test(t)) return f.why; }
   return null;
 }
 
@@ -185,7 +189,9 @@ module.exports = async function handler(req, res){
   }
 };
 
-// 테스트에서 검사기를 직접 확인할 수 있도록 함께 내보낸다.
+// 테스트에서 검사기를 직접 확인할 수 있도록, 또 api/counsel-draft.js 가
+// 같은 검사기를 재사용할 수 있도록 함께 내보낸다.
 module.exports.findForbidden = findForbidden;
 module.exports.findInventedNumber = findInventedNumber;
 module.exports.numbersIn = numbersIn;
+module.exports.FORBIDDEN = FORBIDDEN;

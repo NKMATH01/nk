@@ -49,6 +49,7 @@ async function renderEssays(c){
     <div id="es_items" style="margin-top:8px"></div>
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <button type="button" class="btn line sm" id="es_additem">${svg('plus','sm')}문항 추가</button>
+      <button type="button" class="btn line sm" id="es_load">${svg('file','sm')}다른 학생 시험지 불러오기</button>
       <span style="font-size:12.5px;font-weight:700">전체 총점</span><span class="chip blue" id="es_total">0/0</span></div>
     <div class="field" style="margin-top:8px"><label>코멘트</label><textarea id="es_comment" rows="2" placeholder="첨삭 코멘트" style="padding:9px 11px;border:1.5px solid var(--line);border-radius:9px">${editing&&editing.comment?esc(editing.comment):''}</textarea></div>
     <button class="btn" id="es_add">${svg('check','sm')}${editing?'수정 저장':'기록 저장'}</button>
@@ -134,6 +135,25 @@ async function renderEssays(c){
     paint();
     // 문항 번호 기본값은 현재 문항 수+1(중간 문항을 지운 뒤엔 강사가 직접 고친다).
     $('es_additem').addEventListener('click',()=>{sync();draft.push(newItem(draft.length+1));paint();});
+
+    /* 다른 학생 시험지 불러오기. 빈 폼(문항 1개·RUBRIC 기본 기준·배점 미입력)을 넘어선 입력이
+       있으면 덮어쓰기 경고를 패널에 띄운다 — 수정 중이면 언제나 대체 대상이 있다. */
+    const isDirty=()=>!!editing||$('es_univ').value.trim()!==''||draft.length!==1||draft[0].criteria.length!==RUBRIC.length
+      ||draft[0].criteria.some((cr,i)=>cr.label!==RUBRIC[i]||String(cr.points||'').trim()!==''||(cr.mark||'O')!=='O');
+    $('es_load').addEventListener('click',()=>{sync();openEssayPicker(sid,isDirty(),(stu,rec)=>{
+      /* ★ 가져오는 것은 시험지 양식뿐이다 — 문항 번호·기준 이름·배점·대상 대학.
+         mark(O/△/X)는 그 학생의 채점 결과이므로 절대 복사하지 않는다(복사하면 남의 성적이
+         이 학생 기록에 섞인다). newCriterion 으로 새로 만들어 전부 기본값 'O' 로 둔다.
+         comment·week_date·총점도 가져오지 않는다(코멘트는 그 학생에게 쓴 글, 총점은 저장 시 재계산).
+         criteria[].tag 는 옮기지 않는다 — 이 폼은 label·points·mark 만 다뤄 sync 에서 어차피 버려진다
+         (calc 는 tag 가 없으면 RUBRIC_TO_ERROR[label] 로 오류유형을 잡으므로 라벨만으로 충분하다). */
+      const items=(rec.items||[]).map(it=>({no:it.no,criteria:(it.criteria||[]).map(cr=>{
+        const nc=newCriterion(cr.label);nc.points=cr.points;return nc;})}));
+      draft.length=0;items.forEach(it=>draft.push(it));paint();
+      if(rec.univ_name)$('es_univ').value=rec.univ_name;   // 같은 시험지라는 전제이므로 대상 대학은 함께 옮긴다
+      const m=$('es_msg');m.className='msg ok';
+      m.textContent=`${stu.name} 학생의 ${fmtDate(rec.week_date).slice(5).replace('-','/')} 기록에서 문항 ${items.length}개를 가져왔습니다. 판정은 비어 있으니 새로 채점하세요.`;
+    });});
     $('es_cancel')?.addEventListener('click',()=>{app.essayEdit=null;renderEssays(c);});
 
     $('es_add').addEventListener('click',async()=>{
@@ -178,6 +198,70 @@ function itemsHTML(items){
       <b class="es_got" style="font-size:12.5px;width:34px;text-align:right">0</b>
       <button type="button" class="btn danger sm es_delcri">${svg('trash','sm')}</button></div>`).join('')}
   </div>`).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   다른 학생 시험지 불러오기
+
+   같은 시험지를 여러 학생이 치르면 문항·기준·배점을 학생마다 처음부터 다시
+   입력하게 된다. 학생 → 그 학생의 첨삭 이력 순으로 골라 **양식만** 가져온다.
+   items 가 있는 기록만 후보다 — 옛 3분할 기록은 문항·기준 구조가 없어 가져올 것이 없다.
+   조회는 기존 listStudents·listEssays 를 그대로 쓰고, 패널·배경·닫기 관례는
+   주간테스트의 openBankPicker(js/views/tests.js)를 따른다.
+   ═══════════════════════════════════════════════════════════════════ */
+async function openEssayPicker(curSid,dirty,onPick){
+  const back=document.createElement('div');
+  back.style.cssText='position:fixed;inset:0;background:rgba(20,22,28,.45);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px';
+  const panel=document.createElement('div');
+  panel.style.cssText='background:#fff;border-radius:14px;box-shadow:var(--shadow);padding:16px;width:min(720px,96vw);max-height:86vh;overflow:auto';
+  panel.innerHTML='<p class="muted">학생 명단 불러오는 중...</p>';
+  back.appendChild(panel);document.body.appendChild(back);
+  const close=()=>back.remove();
+  back.addEventListener('click',e=>{if(e.target===back)close();});
+  // 덮어쓰기 확인은 브라우저 confirm 이 아니라 패널 안 문구 + 버튼 클릭으로 받는다.
+  const warn=dirty?'<div class="msg" style="color:var(--amber);margin:0 0 10px">현재 입력 중인 내용이 대체됩니다. 그래도 가져오려면 아래에서 기록을 고르세요.</div>':'';
+  const head=(title,sub)=>`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h3 style="margin:0">${svg('file')}${title} <span class="sub">${sub}</span></h3>
+      <button type="button" class="btn line sm ep_close">닫기</button></div>${warn}`;
+  const bindClose=()=>panel.querySelectorAll('.ep_close').forEach(b=>b.addEventListener('click',close));
+
+  let students=[];
+  try{students=(await db.listStudents()).filter(s=>s.id!==curSid);}
+  catch(e){panel.innerHTML='<p class="msg err">학생 조회 실패: '+esc(e?.message||'오류')+'</p>';return;}
+
+  let q='';
+  const drawStudents=()=>{
+    const list=students.filter(s=>!q||String(s.name||'').toLowerCase().includes(q.toLowerCase()));
+    panel.innerHTML=head('다른 학생 시험지 불러오기','학생을 고르세요')
+      +`<div class="field" style="margin-bottom:10px"><label>학생 검색</label><input class="ep_q" value="${esc(q)}" placeholder="이름"></div>`
+      +(list.length?`<div>${list.map(s=>`<button type="button" class="btn line ep_stu" data-id="${esc(s.id)}" style="margin:0 6px 6px 0">${esc(s.name)}${s.status&&s.status!=='재원'?` <span class="muted" style="font-size:11px">${esc(s.status)}</span>`:''}</button>`).join('')}</div>`
+        :'<p class="muted">조건에 맞는 다른 학생이 없습니다.</p>');
+    bindClose();
+    const qi=panel.querySelector('.ep_q');if(qi)qi.addEventListener('change',()=>{q=qi.value.trim();drawStudents();});
+    panel.querySelectorAll('.ep_stu').forEach(b=>b.addEventListener('click',()=>drawEssays(students.find(s=>s.id===b.dataset.id))));
+  };
+  const drawEssays=async stu=>{
+    const title=esc(stu.name)+' 학생 첨삭 이력';
+    panel.innerHTML=head(title,'불러오는 중...');bindClose();
+    let essays=[];
+    try{essays=(await db.listEssays(stu.id)).filter(e=>e.items&&e.items.length);}
+    catch(e){panel.innerHTML=head(title,'')+'<p class="msg err">첨삭 조회 실패: '+esc(e?.message||'오류')+'</p>';bindClose();return;}
+    // 날짜·대학·문항 수·총배점으로 어느 시험지인지 알아볼 수 있게 한다.
+    const rows=essays.length?essays.map(e=>{const st=itemTotals(e.items);
+      return `<div class="timeline-item" style="padding:10px;margin-bottom:8px">
+        <div class="th" style="margin-bottom:0"><div style="font-size:13px">
+          <b>${esc(e.univ_name||'대학 미기재')}</b> <span class="muted" style="font-size:12px">${esc(fmtDate(e.week_date))}</span>
+          <span class="chip gray">문항 ${e.items.length}개</span> <span class="chip blue">총배점 ${st.max}점</span></div>
+          <button type="button" class="btn sm ep_pick" data-id="${esc(e.id)}">이 양식 가져오기</button></div></div>`;}).join('')
+      :'<p class="muted">가져올 수 있는 첨삭 기록이 없습니다.</p>';
+    panel.innerHTML=head(title,'문항 구조가 있는 기록 '+essays.length+'건')+rows
+      +'<div style="display:flex;justify-content:flex-end;gap:6px;margin-top:12px"><button type="button" class="btn line ep_back">학생 다시 고르기</button></div>';
+    bindClose();
+    panel.querySelector('.ep_back').addEventListener('click',drawStudents);
+    panel.querySelectorAll('.ep_pick').forEach(b=>b.addEventListener('click',()=>{
+      onPick(stu,essays.find(e=>e.id===b.dataset.id));close();}));
+  };
+  drawStudents();
 }
 
 /* ═══════════════════════════════════════════════════════════════════

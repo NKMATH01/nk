@@ -15,7 +15,47 @@ const COUNSEL_CLS={'정기상담':'blue','학부모상담':'purple','진로·지
    20분이면 휴대폰 기본 128kbps AAC 라도 약 19MB 라 한참 여유가 있다. */
 const MAX_AUDIO_MB=100;
 const AI_CHIP={uploaded:'<span class="chip gray">전사 대기</span>',transcribed:'<span class="chip blue">전사됨</span>',
+  drafted:'<span class="chip green">초안 있음</span>',
   failed:'<span class="chip red">전사 실패</span>',blocked:'<span class="chip amber">차단됨</span>'};
+/* ai_status 하나로는 **어느 단계가** 실패했는지 알 수 없다 — 전사 실패도 정돈 실패도
+   'failed' 다(0015 가 정한 값 집합을 늘리지 않는다). 전사문이 남아 있으면 전사는 성공한
+   것이므로 정돈 단계의 실패로 읽어 표시한다. "전사 실패" 라고 적힌 기록에 전사문이
+   붙어 있으면 강사가 무엇을 해야 할지 판단할 수 없다. */
+const AI_CHIP_LATE={failed:'<span class="chip red">정돈 실패</span>',blocked:'<span class="chip amber">정돈 차단됨</span>'};
+function aiChip(n){
+  if(!n.ai_status)return '';
+  if(n.transcript&&AI_CHIP_LATE[n.ai_status])return AI_CHIP_LATE[n.ai_status];
+  return AI_CHIP[n.ai_status]||'';
+}
+
+/* AI 초안 상자 — 회색 점선으로 강사 입력과 시각적으로 갈라 둔다
+   (채점 패널 js/views/tests.js·리포트 초안 js/views/report.js 와 같은 관례).
+
+   ★ 유형(category)은 **칩으로 제안만** 한다. 폼의 select 를 자동으로 바꾸지 않는다.
+     유형은 상담 통계의 집계 축이라, AI 가 기본값을 정하면 강사가 손대지 않은 값이
+     그대로 집계에 섞여 통계가 조용히 왜곡된다(설계서 9절의 결정). */
+const DRAFT_BOX='border:1.5px dashed var(--line);border-radius:9px;padding:10px;background:#FAFAFB;margin-top:8px';
+function draftBox(n){
+  const d=n.ai_draft;if(!d)return '';
+  const list=a=>(Array.isArray(a)&&a.length)
+    ?'<ul style="margin:2px 0 0;padding-left:17px">'+a.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>'
+    :'<div class="muted" style="font-size:12px">(없음)</div>';
+  const safe=String(d.student_safe_text||'').trim();
+  return `<div style="${DRAFT_BOX}">
+    <div style="font-size:11px;font-weight:700;margin-bottom:6px">AI 초안 (미확정 · 강사 확인 필요)</div>
+    <div style="font-size:12.5px"><b>요약</b>${d.category?` <span class="chip ${COUNSEL_CLS[d.category]||'gray'}">AI 제안: ${esc(d.category)}</span>`:''}
+      <div style="white-space:pre-wrap;margin-top:2px">${esc(d.summary||'')}</div></div>
+    <div style="font-size:12.5px;margin-top:6px"><b>주요 논점</b>${list(d.key_points)}</div>
+    <div style="font-size:12.5px;margin-top:6px"><b>후속 조치 후보</b>${list(d.follow_ups)}</div>
+    <div style="font-size:12.5px;margin-top:6px"><b>학생 공개용 문장</b>
+      <div style="white-space:pre-wrap;margin-top:2px">${safe?esc(safe):'<span class="muted">(공개할 만한 문장이 없다고 판단됨)</span>'}</div></div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn sm cd_take" data-id="${esc(n.id)}">초안 가져오기</button>
+      ${safe?`<button class="btn line sm cd_safe" data-id="${esc(n.id)}">학생 공개용 문장 쓰기</button>`:''}
+    </div>
+    <div class="muted" style="font-size:11px;margin-top:6px">가져온 뒤 고치고 [수정 저장]을 눌러야 기록에 남습니다. 유형은 제안일 뿐이니 폼에서 직접 고르세요.</div>
+  </div>`;
+}
 
 /* ─── 브라우저 내 녹음 ─────────────────────────────────────────────
    형식을 audio/webm;codecs=opus 로 **고정**한다. 브라우저가 고르게 두지 않는다.
@@ -128,14 +168,23 @@ async function renderCounseling(c){
   const block=app.DEMO?'데모 모드에서는 녹음만 되고 업로드·전사는 하지 않습니다.'
     :(!consent?'이 학생의 녹음 동의가 없습니다. [학생 관리] 화면에서 동의를 먼저 등록하세요.'
     :((!ai||!ai.configured)?'AI 기능 미설정 — GEMINI_API_KEY 가 등록되지 않았습니다. [설정] 화면의 AI 상태 카드를 참고하세요.':''));
+  /* 정돈(AI 초안)을 막는 사유는 업로드와 다르다 — 녹음 동의는 이미 업로드 때 확인했고,
+     여기서 다루는 것은 서버에 남아 있는 전사문뿐이라 동의를 다시 볼 일이 없다. */
+  const draftBlock=app.DEMO?'데모 모드에서는 AI 정돈을 실행하지 않습니다.'
+    :((!ai||!ai.configured)?'AI 기능 미설정 — GEMINI_API_KEY 가 등록되지 않았습니다.':'');
 
   const timeline=notes.length?notes.map(n=>`<div class="timeline-item">
-      <div class="th"><div><span class="chip ${COUNSEL_CLS[n.category]||'gray'}">${esc(n.category)}</span> <span class="muted" style="font-size:12px;margin-left:6px">${esc(fmtDate(n.note_date))}</span>${n.visible_to_student?' <span class="chip green">학생 공개</span>':''}${n.ai_status?' '+(AI_CHIP[n.ai_status]||''):''}${n.audio_path?' <span title="녹음 있음">🎧</span>':(n.audio_purged_at?' <span class="muted" style="font-size:11.5px">음성 삭제됨</span>':'')}</div>
+      <div class="th"><div><span class="chip ${COUNSEL_CLS[n.category]||'gray'}">${esc(n.category)}</span> <span class="muted" style="font-size:12px;margin-left:6px">${esc(fmtDate(n.note_date))}</span>${n.visible_to_student?' <span class="chip green">학생 공개</span>':''}${n.ai_status?' '+aiChip(n):''}${n.audio_path?' <span title="녹음 있음">🎧</span>':(n.audio_purged_at?' <span class="muted" style="font-size:11.5px">음성 삭제됨</span>':'')}</div>
         <div><button class="btn line sm cn_edit" data-id="${esc(n.id)}">수정</button>${n.audio_path?` <button class="btn line sm cn_purge" data-id="${esc(n.id)}" title="음성 원본만 지웁니다. 전사문과 상담 기록은 남습니다.">음성 삭제 (되돌릴 수 없음)</button>`:''} <button class="btn danger sm cn_del" data-id="${esc(n.id)}">삭제</button></div></div>
       <div style="font-size:13.5px;white-space:pre-wrap;line-height:1.6">${esc(n.content)}</div>
       ${n.follow_up?`<div style="margin-top:8px;padding:8px 10px;background:var(--bg);border-radius:8px;font-size:12.5px"><b>후속 조치</b> · ${esc(n.follow_up)}</div>`:''}
       ${n.transcript?`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12.5px;font-weight:700">전사문 보기</summary>
         <div style="margin-top:6px;padding:8px 10px;background:var(--bg);border:1px dashed var(--line);border-radius:8px;font-size:12.5px;white-space:pre-wrap;line-height:1.6;max-height:320px;overflow:auto">${esc(n.transcript)}</div></details>`:''}
+      ${n.transcript?`<div class="row" style="margin-top:8px;align-items:center;gap:8px">
+        <button class="btn line sm cd_run" data-id="${esc(n.id)}" ${draftBlock?'disabled':''}>${svg('spark','sm')}${n.ai_draft?'AI로 다시 정돈하기':'AI로 정돈하기'}</button>
+        ${draftBlock?`<span class="muted" style="font-size:11.5px">${esc(draftBlock)}</span>`:''}
+      </div>
+      <div id="cd_out_${esc(n.id)}">${draftBox(n)}</div>`:''}
     </div>`).join(''):'<p class="muted">상담 기록이 없습니다.</p>';
 
   // 녹음 상태에 따라 카드 윗단이 셋 중 하나로 그려진다(녹음 중 / 미리듣기 / 대기).
@@ -244,6 +293,88 @@ async function renderCounseling(c){
     b.disabled=true;
     try{await db.purgeCounselingAudio(n.id,n.audio_path);renderCounseling(c);}
     catch(e){b.disabled=false;alert('음성 삭제 실패: '+(e?.message||'오류'));}}));
+
+  /* [AI로 정돈하기] — 전사 버튼과 **분리**돼 있다. 전사는 성공했는데 정돈이 실패해도
+     전사문은 남아야 하기 때문이다(설계서 0절 원칙 2). 그래서 전사 직후 자동으로
+     이어 부르지도 않는다 — 강사가 전사문을 보고 나서 누른다.
+     ★ 버튼의 조건은 ai_status 가 아니라 **전사문의 존재**다. 서버도 transcript 가 없으면
+       400 을 돌려주고, 정돈이 blocked/failed 로 끝난 기록도 전사문이 남아 있으면
+       다시 시도할 수 있어야 한다. */
+  c.querySelectorAll('.cd_run').forEach(b=>b.addEventListener('click',()=>runDraft(c,b.dataset.id)));
+
+  /* [초안 가져오기] — 폼에 **채우기만** 한다. 저장은 강사가 [수정 저장] 을 눌러야 일어난다(2단계).
+     ★ 편집 대상을 먼저 그 기록으로 바꾼다. 입력 폼은 화면에 하나뿐이라, 편집 대상이
+       다른 상태에서 채우면 초안이 엉뚱한 기록에 붙거나 새 기록으로 저장된다
+       (녹음에서 만들어진 '(정돈 대기)' 행은 그대로 남고 중복이 생긴다). */
+  c.querySelectorAll('.cd_take').forEach(b=>b.addEventListener('click',async()=>{
+    const n=notes.find(x=>x.id===b.dataset.id);if(!n||!n.ai_draft)return;
+    const d=n.ai_draft;
+    app.counselEdit=n.id;
+    await renderCounseling(c);
+    const ta=$('cn_content');
+    if(ta)ta.value=[String(d.summary||'').trim(),
+      (Array.isArray(d.key_points)&&d.key_points.length)?d.key_points.map(x=>'· '+x).join('\n'):'']
+      .filter(Boolean).join('\n\n');
+    const fu=$('cn_follow');
+    if(fu&&Array.isArray(d.follow_ups)&&d.follow_ups.length)fu.value=d.follow_ups.map(x=>'· '+x).join('\n');
+    const m=$('cn_msg');
+    if(m){m.className='msg';m.textContent='초안을 폼에 넣었습니다. 확인·수정한 뒤 [수정 저장]을 누르세요. 유형은 AI 제안을 참고해 직접 고르시면 됩니다.';}
+  }));
+
+  /* [학생 공개용 문장 쓰기] — 내용 필드를 **덮지 않고** 뒤에 덧붙인다.
+     학생 공개 체크박스는 건드리지 않는다. 공개 여부는 강사가 정할 일이라,
+     버튼 하나로 학생에게 보이는 상태가 되면 안 된다. */
+  c.querySelectorAll('.cd_safe').forEach(b=>b.addEventListener('click',async()=>{
+    const n=notes.find(x=>x.id===b.dataset.id);if(!n||!n.ai_draft)return;
+    const t=String(n.ai_draft.student_safe_text||'').trim();if(!t)return;
+    app.counselEdit=n.id;
+    await renderCounseling(c);
+    const ta=$('cn_content');if(!ta)return;
+    const cur=ta.value.trim();
+    ta.value=(cur?cur+'\n\n':'')+'[학생 공개용]\n'+t;
+    const m=$('cn_msg');
+    if(m){m.className='msg';m.textContent='학생 공개용 문장을 내용 뒤에 덧붙였습니다. 학생에게 보이게 하려면 [학생에게 공개]를 체크하고 저장하세요.';}
+  }));
+}
+
+/* 전사문 → 구조화 초안. 결과는 서버가 ai_draft 에만 저장한다.
+   ★ 여기에도, 서버에도 content·follow_up·category 로 곧장 가는 경로는 없다.
+     폼에 들어가려면 강사가 [초안 가져오기] 를 눌러야 하고, 기록에 남으려면 다시
+     [수정 저장] 을 눌러야 한다(2단계). */
+async function runDraft(c,noteId){
+  const box=h=>{const o=$('cd_out_'+noteId);if(o)o.innerHTML=h;};
+  if(!$('cd_out_'+noteId))return;
+  // 이력 전체의 AI 버튼을 잠근다 — 여러 기록을 동시에 돌리면 어느 결과인지 헷갈린다.
+  const ctl=[...c.querySelectorAll('.cd_run,.cd_take,.cd_safe')];
+  ctl.forEach(el=>el.disabled=true);
+  box(`<div style="${DRAFT_BOX}"><span class="muted" style="font-size:12px">초안 생성 중... 잠시만 기다리세요.</span></div>`);
+  try{
+    const r=await db.draftCounseling(noteId);
+    if(r&&r.ok===false){
+      /* 검사기 거부는 오류가 아니라 **결과**다. 무엇이 왜 걸렸는지 그대로 보여 준다 —
+         이게 화면에 보여야 패턴이 과도한지 판단하고 조정할 수 있다
+         (설계서가 이월해 둔 '검사기 과도 리젝' 항목). 초안은 저장되지 않았다. */
+      if(r.reason==='rejected'){
+        const rows=(r.issues||[]).map(i=>`<li>${esc(i.field)} — ${esc(i.kind==='forbidden'
+          ?'금지 표현('+i.detail+')':'전사문에 없는 숫자('+i.detail+')')}
+          <div class="muted" style="font-size:11px">${esc(i.excerpt||'')}</div></li>`).join('');
+        box(`<div style="${DRAFT_BOX}"><div style="font-size:11px;font-weight:700;color:var(--red);margin-bottom:4px">검수에 걸려 초안을 저장하지 않았습니다</div>
+          <ul style="margin:2px 0 0;padding-left:17px;font-size:12px">${rows||'<li>사유 불명</li>'}</ul>
+          <div class="muted" style="font-size:11px;margin-top:6px">다시 시도하거나, 전사문을 보고 직접 정돈하세요. 상담 기록과 전사문은 그대로 남아 있습니다.</div></div>`);
+        return;
+      }
+      const why=r.ai_status==='blocked'
+        ?'AI 가 응답을 차단했습니다('+(r.blocked||'사유 불명')+').'
+        :(r.message||'AI 가 초안을 만들지 못했습니다.');
+      box(`<div style="${DRAFT_BOX}"><div style="font-size:12px;color:var(--red)">${esc(why)}</div>
+        <div class="muted" style="font-size:11px;margin-top:4px">전사문은 그대로 남아 있으니 직접 정돈하셔도 됩니다.</div></div>`);
+      return;
+    }
+    await renderCounseling(c);   // 저장된 초안을 이력에서 다시 그린다
+  }catch(e){
+    box(`<div style="${DRAFT_BOX}"><div style="font-size:12px;color:var(--red)">실패: ${esc(e?.message||'오류')}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px">전사문과 상담 기록은 남아 있습니다.</div></div>`);
+  }finally{ctl.forEach(el=>{el.disabled=false;});}
 }
 
 /* 녹음 업로드 → 전사. **파일 선택과 브라우저 녹음이 같은 함수를 쓴다** —

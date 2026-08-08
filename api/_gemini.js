@@ -335,8 +335,33 @@ function buildGradeSchema(tagEnum, withScore){
   return { type: "OBJECT", properties: props, required: required };
 }
 
+/* 상담 초안: 전사문을 요약·유형·논점·후속 조치로 정돈한다(api/counsel-draft.js).
+
+   ★ category 의 enum 은 세 곳이 **같은 값이어야 한다.**
+       · DB check 제약   db/migrations/0001_baseline.sql:163
+       · 프런트 목록     js/views/counseling.js 의 COUNSEL_CATS
+       · 여기(모델에게 주는 enum)
+     하나라도 어긋나면 모델이 고른 유형이 저장 단계에서 조용히 튕긴다. 지금은 제안까지만
+     하므로 바로 저장되지는 않지만, 어긋난 값을 강사에게 보여 주는 것 자체가 잘못된 안내다.
+
+   student_safe_text 는 학생에게 그대로 보여도 되는 문장이다 — 제3자 언급·민감한 표현을
+   걷어낸 판본이며, 확정 내용(content)과는 다른 글이다. */
+const COUNSEL_CATS = ["정기상담", "학부모상담", "진로·지원상담", "기타"];
+
+const COUNSEL_DRAFT_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    summary: { type: "STRING", description: "상담 내용 3~5문장 요약. 전사문에 있는 사실만 쓴다." },
+    category: { type: "STRING", enum: COUNSEL_CATS, description: "상담 유형 제안" },
+    key_points: { type: "ARRAY", items: { type: "STRING" }, description: "주요 논점 3~6개" },
+    follow_ups: { type: "ARRAY", items: { type: "STRING" }, description: "후속 조치 후보. 없으면 빈 배열." },
+    student_safe_text: { type: "STRING", description: "학생에게 공개해도 되는 문장" },
+  },
+  required: ["summary", "category", "key_points", "follow_ups", "student_safe_text"],
+};
+
 module.exports = {
   callGemini, uploadFile, hasKey, model, gradingMode, estimateCost,
   priceIn, priceOut, PROMPT_VERSION,
-  TRANSCRIBE_SCHEMA, buildGradeSchema,
+  TRANSCRIBE_SCHEMA, buildGradeSchema, COUNSEL_DRAFT_SCHEMA, COUNSEL_CATS,
 };

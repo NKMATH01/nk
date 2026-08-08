@@ -189,6 +189,11 @@ const db={
   // 상담 녹음 전사. 길이에 따라 수 분 걸린다(vercel.json 에서 300초까지 허용).
   async transcribeCounseling(noteId){if(app.DEMO)throw new Error('데모 모드에서는 전사를 실행하지 않습니다.');
     return await apiFetch('/api/counsel-transcribe',{method:'POST',body:{note_id:noteId}});},
+  /* 전사문 → 구조화 초안. 결과는 ai_draft 에만 쌓이고 확정 필드는 건드리지 않는다.
+     검사기에 걸리면 예외가 아니라 {ok:false,reason:'rejected',issues} 로 돌아온다 —
+     부르는 쪽이 r.ok 를 반드시 확인해야 한다. */
+  async draftCounseling(noteId){if(app.DEMO)throw new Error('데모 모드에서는 AI 정돈을 실행하지 않습니다.');
+    return await apiFetch('/api/counsel-draft',{method:'POST',body:{note_id:noteId}});},
   async insertEssay(e){if(app.DEMO){app.store.essay_gradings.push(Object.assign({id:uuid(),created_at:todayStr()},e));return;}
     const {error}=await app.sb.from('essay_gradings').insert(e);if(error)throw error;},
   async updateEssay(id,patch){if(app.DEMO){const o=app.store.essay_gradings.find(x=>x.id===id);Object.assign(o,patch);return;}
