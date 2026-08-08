@@ -82,6 +82,16 @@ async function removeCounselAudio(path){
   if(!data||!data.length)throw new Error('음성 파일을 지우지 못했습니다(대상 없음 또는 권한 없음). 마이그레이션 0016 이 적용되었는지 [설정] 화면의 DB 마이그레이션 상태에서 확인하세요.');
 }
 
+/* 상담 기록을 학생·학부모에게 내보낼 때 쓰는 **컬럼 화이트리스트**.
+   ★ 여기에 컬럼을 더하지 마라. counseling_notes 의 학생용 RLS(stu_self)는 행 단위라
+     컬럼을 가려 주지 못한다. transcript(전사문 원문)·ai_draft(미확정 AI 초안)·
+     audio_path 가 이 목록에 섞이면 그대로 학생·학부모 응답에 실려 나간다.
+   학생 경로(listStudentCounseling)와 학부모 경로(listParentCounseling)가 같은 값을
+   쓰도록 한 곳에 둔다 — 한쪽만 넓히는 실수가 나오지 않게. */
+const COUNSEL_SAFE_COLS='id,note_date,category,content,follow_up,visible_to_student';
+const PARENT_COUNSEL_CAT='학부모상담';
+const pickCounselCols=n=>Object.fromEntries(COUNSEL_SAFE_COLS.split(',').map(k=>[k,n[k]]));
+
 const db={
   async listStudents(){if(app.DEMO)return app.store.students.slice();return await sbq(app.sb.from('students').select('*').order('created_at'),'학생 조회',[]);},
   async listUniversities(){if(app.DEMO)return app.store.universities.slice();return await sbq(app.sb.from('universities').select('*').order('region').order('name'),'대학 조회',[]);},
@@ -146,11 +156,24 @@ const db={
        공개 여부 필터도 서버(PostgREST) 쪽에 건다 — 클라이언트 filter 는 응답이
        이미 브라우저에 도착한 뒤라 유출을 막지 못한다. */
   async listStudentCounseling(sid){
-    const COLS='id,note_date,category,content,follow_up,visible_to_student';
     if(app.DEMO)return app.store.counseling_notes.filter(n=>n.student_id===sid&&n.visible_to_student)
-      .map(n=>Object.fromEntries(COLS.split(',').map(k=>[k,n[k]]))).sort((a,b)=>a.note_date<b.note_date?1:-1);
-    return await sbq(app.sb.from('counseling_notes').select(COLS).eq('student_id',sid)
+      .map(pickCounselCols).sort((a,b)=>a.note_date<b.note_date?1:-1);
+    return await sbq(app.sb.from('counseling_notes').select(COUNSEL_SAFE_COLS).eq('student_id',sid)
       .eq('visible_to_student',true).order('note_date',{ascending:false}),'상담 기록 조회',[]);},
+  /* 학부모 경로 전용 — 지금까지 학부모는 자기 상담 기록조차 볼 수 없었다.
+     ★ 컬럼은 학생 경로와 **같은 화이트리스트**(COUNSEL_SAFE_COLS)를 쓴다.
+       transcript(전사문 원문)·ai_draft(미확정 AI 초안)·audio_path 가 새면 안 된다.
+     게이트가 둘이다: 유형이 '학부모상담' 이고 **그 위에** 강사가 공개로 표시한 건만.
+     RLS(0006 stu_self)도 visible_to_student=true 만 통과시키므로 서버·클라이언트
+     양쪽에서 같은 조건이 걸린다. 필터는 전부 PostgREST 쪽에 건다 — 클라이언트
+     filter 는 응답이 이미 브라우저에 도착한 뒤라 유출을 막지 못한다. */
+  async listParentCounseling(sid){
+    if(app.DEMO)return app.store.counseling_notes
+      .filter(n=>n.student_id===sid&&n.visible_to_student&&n.category===PARENT_COUNSEL_CAT)
+      .map(pickCounselCols).sort((a,b)=>a.note_date<b.note_date?1:-1);
+    return await sbq(app.sb.from('counseling_notes').select(COUNSEL_SAFE_COLS).eq('student_id',sid)
+      .eq('visible_to_student',true).eq('category',PARENT_COUNSEL_CAT)
+      .order('note_date',{ascending:false}),'상담 기록 조회',[]);},
   /* 대시보드가 학생별 '최근 상담일' 하나만 쓴다(js/views/dashboard.js).
      ★ select('*') 로 두지 마라. renderDashboard 에는 역할 가드가 없고 라우터 맵은
        역할과 무관해, 학생이 dashboard 로 들어오기만 해도 transcript(전사문 원문)·
@@ -213,6 +236,46 @@ const db={
     const r=await apiFetch('/api/accounts',{method:'POST',body:{action:'upsert',phone:normPhone(phone),password,role,student_id:sid||null}});return r.result;},
   async upsertReadinessSnapshot(rows){if(app.DEMO)return;
     const {error}=await app.sb.from('readiness_snapshots').upsert(rows,{onConflict:'student_id,snap_date'});if(error)throw error;},
+  /* 학생·학부모 화면이 읽는 최신 준비도 스냅샷.
+     ★ 학생 화면은 준비도를 **재계산하지 않는다.** 학생 세션은 RLS 때문에 본인 점수만
+       보여 코호트가 n<2 가 되고, 그러면 강사 화면과 다른 숫자가 나온다.
+       스냅샷이 없으면 null 을 돌려주고 화면은 '산출 대기' 로 적는다 — 재계산으로 때우면
+       그 순간 두 화면의 숫자가 다시 갈라진다.
+     RLS: readiness_snapshots 의 stu_self(0006)로 본인 행만 돌아온다. */
+  async latestReadinessSnapshot(sid){
+    if(app.DEMO)return (app.store.readiness_snapshots||[]).filter(r=>r.student_id===sid)
+      .sort((a,b)=>a.snap_date<b.snap_date?1:-1)[0]||null;
+    return await sbq(app.sb.from('readiness_snapshots').select('*').eq('student_id',sid)
+      .order('snap_date',{ascending:false}).limit(1).maybeSingle(),'준비도 스냅샷 조회',null);},
+
+  /* ── 학부모 확인 / 상담 요청 (0020) ── */
+  /* [확인했습니다]. **upsert 가 아니라 on conflict do nothing 이다**(ignoreDuplicates) —
+     같은 주차를 두 번 눌러도 첫 확인 시각이 남아야 하고, 그래야 update 정책 없이
+     insert 권한만으로 동작한다(0020 RLS). */
+  async ackParent(sid,weekNo){
+    if(app.DEMO){const a=(app.store.parent_ack=app.store.parent_ack||[]);
+      if(a.find(x=>x.student_id===sid&&x.week_no===weekNo))return;
+      a.push({id:uuid(),student_id:sid,week_no:weekNo,acked_at:new Date().toISOString()});return;}
+    const {error}=await app.sb.from('parent_ack')
+      .upsert({student_id:sid,week_no:weekNo},{onConflict:'student_id,week_no',ignoreDuplicates:true});
+    if(error)throw error;},
+  async listParentAcks(sid){if(app.DEMO)return (app.store.parent_ack||[]).filter(a=>a.student_id===sid);
+    return await sbq(app.sb.from('parent_ack').select('*').eq('student_id',sid)
+      .order('week_no',{ascending:false}),'확인 기록 조회',[]);},
+  async insertCounselRequest(row){
+    if(app.DEMO){(app.store.counsel_requests=app.store.counsel_requests||[])
+      .unshift(Object.assign({id:uuid(),status:'open',created_at:new Date().toISOString()},row));return;}
+    const {error}=await app.sb.from('counsel_requests').insert(row);if(error)throw error;},
+  // sid 를 주면 본인 것만(학부모 화면), 주지 않으면 전체(관리자 화면).
+  async listCounselRequests(sid){
+    if(app.DEMO)return (app.store.counsel_requests||[]).filter(r=>!sid||r.student_id===sid);
+    let q=app.sb.from('counsel_requests').select('*').order('created_at',{ascending:false});
+    if(sid)q=q.eq('student_id',sid);
+    return await sbq(q,'상담 요청 조회',[]);},
+  // 상태 변경은 관리자만 가능하다(0020 에 학생·학부모 update 정책이 없다).
+  async updateCounselRequestStatus(id,status){
+    if(app.DEMO){const o=(app.store.counsel_requests||[]).find(x=>x.id===id);if(o)o.status=status;return;}
+    const {error}=await app.sb.from('counsel_requests').update({status}).eq('id',id);if(error)throw error;},
   // 회차 난이도 보정(코호트 z)에 쓸 전체 채점. 학생 계정은 RLS 때문에 본인 것만 돌아온다.
   async listAllScores(){if(app.DEMO)return app.store.scores.slice();
     return await sbq(app.sb.from('scores').select('question_id,student_id,earned'),'채점 조회',[]);},

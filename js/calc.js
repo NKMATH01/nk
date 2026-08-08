@@ -11,43 +11,85 @@ function ewma(percents,alpha=0.4){
   for(let i=1;i<percents.length;i++)e=alpha*(Number(percents[i])||0)+(1-alpha)*e;
   return e;
 }
-/* bundle: {weeklyPercents:[num], weeklyScaled:[num], questionRecords:[{unit,points,earned}],
+/* ── 준비도 산식 v2 (0020) ──
+   bundle: {weeklyPercents:[num], weeklyScaled:[num], questionRecords:[{unit,points,earned}],
             essays:[{earned,max}], homeworks:[{problems_total,problems_correct}]}
 
-   [주간점수] weeklyScaled 가 있으면 그것을 쓴다(회차 난이도를 보정한 값).
-   없으면 weeklyPercents 원점수로 계산한다.
+   ★ 척도를 섞지 않는다 — 신규 산식은 z-표준화를 **쓰지 않는다**
+     구 산식은 weekly 에 코호트 z-표준화 값(50+10z)을 넣고 mastery/essay/homework 는
+     0~100 원시 %를 넣어 그대로 가중평균했다. z 척도의 50 은 "평균"이고 % 척도의
+     50 은 "낙제"라, 두 척도를 더하면 상위권이 눌리고 하위권이 올라간다. 그 결과
+     admitBand 의 75/55 **절대** 임계값이 의미를 잃는다.
+       → 가중평균은 원점수 %(weeklyPercents)만 쓴다.
+       → z 는 버리지 않는다. weeklyScaledEwma 로 따로 돌려주어 "회차 난이도 대비"
+         참고 지표로 화면에 병기한다(같은 70점이라도 어려운 회차의 70점은 다르다).
+
+   ★ 과제를 실력 가중에서 뺀다
+     과제 정답률은 학생 자기채점이라 실력 측정치가 아니라 **성실성** 지표다.
+     coverage 를 준비도에서 뺀 것과 같은 이유(아래)로 가중 항목에서 빼고
+     diligence 로 따로 돌려준다. 화면에는 계속 "성실성"으로 표시한다.
 
    [커버리지 분리] 진도를 얼마나 훑었는지(coverage)는 "실력"이 아니라 "진행 상황"이라,
    준비도 점수에 섞으면 시험을 많이 본 학생이 실력과 무관하게 높게 나온다.
-   가중 항목에서 빼고 별도 반환값으로 돌려준다. */
+
+   ★ 신·구 병행 반환 — 기존 필드(readiness/parts/coverage)는 이름을 그대로 둔다
+       readiness · parts             신규 산식
+       readinessLegacy · partsLegacy 구 산식(과거 스냅샷과 같은 값이 나온다)
+     스냅샷 적재는 둘을 함께 남기고(0020), readiness_snapshots 의 **기존 행은
+     고치지 않는다**. 과거 스냅샷은 구 산식 값 그대로 보존된다. */
+const READINESS_WEIGHTS={weekly:30,mastery:20,essay:15};
+/* 화면에 그대로 내보내는 계산식 한 줄. 지금은 62 가 무엇인지 아무도 알려주지 않는다.
+   ★ READINESS_WEIGHTS 를 고치면 이 문장도 함께 고쳐야 한다. */
+const READINESS_FORMULA='주간점수 30% · 문항 정답률 20% · 첨삭 15% (없는 항목은 가중치를 나눠 재정규화)';
+/* 산출 기준이 바뀐 날(코드 기준). 화면의 "산출 기준 변경일" 문구와 스냅샷 meta 에 쓴다.
+   실제로 v2 로 적재되기 시작한 날짜는 meta.formula_version='v2' 인 첫 스냅샷의 snap_date 다. */
+const READINESS_V2_SINCE='2026-08-08';
+
+// 결측 항목의 가중치를 남은 항목에 나눠 재정규화한다(구·신 산식 공용).
+function weightedAvg(defs){
+  const parts=defs.filter(d=>d.value!=null);
+  const tw=parts.reduce((s,p)=>s+p.weight,0);
+  return {parts,value:tw>0?parts.reduce((s,p)=>s+p.value*(p.weight/tw),0):null};
+}
 function computeReadiness(bundle){
-  const parts=[];
-  const weekly=(bundle.weeklyScaled&&bundle.weeklyScaled.length)?bundle.weeklyScaled:bundle.weeklyPercents;
-  if(weekly && weekly.length){
-    parts.push({key:'weekly',weight:30,value:clamp(ewma(weekly))});
-  }
-  const qr=bundle.questionRecords||[];
+  const b=bundle||{};
+  const weeklyRaw=(b.weeklyPercents&&b.weeklyPercents.length)?clamp(ewma(b.weeklyPercents)):null;
+  const weeklyScaledEwma=(b.weeklyScaled&&b.weeklyScaled.length)?clamp(ewma(b.weeklyScaled)):null;
+  const qr=b.questionRecords||[];
   const covered=new Set(qr.map(r=>r.unit));
   const coverage=qr.length?clamp(covered.size/UNITS.length*100):null;
+  let mastery=null;
   if(qr.length){
     const pts=qr.reduce((s,r)=>s+(Number(r.points)||0),0);
     const earned=qr.reduce((s,r)=>s+(Number(r.earned)||0),0);
-    parts.push({key:'mastery',weight:20,value:clamp(pts>0?earned/pts*100:0)});
+    mastery=clamp(pts>0?earned/pts*100:0);
   }
-  const es=bundle.essays||[];
-  if(es.length){
-    const avg=es.reduce((s,e)=>s+((Number(e.max)||0)>0?(Number(e.earned)||0)/(Number(e.max))*100:0),0)/es.length;
-    parts.push({key:'essay',weight:15,value:clamp(avg)});
-  }
-  const hw=bundle.homeworks||[];
-  if(hw.length){
-    const avg=hw.reduce((s,h)=>{const t=Number(h.problems_total)||0;const cc=Number(h.problems_correct)||0;return s+(t>0?cc/t*100:0);},0)/hw.length;
-    parts.push({key:'homework',weight:10,value:clamp(avg)});
-  }
-  const tw=parts.reduce((s,p)=>s+p.weight,0);
-  let readiness=null;
-  if(tw>0)readiness=parts.reduce((s,p)=>s+p.value*(p.weight/tw),0);
-  return {readiness,parts,coverage};
+  const es=b.essays||[];
+  const essay=es.length
+    ?clamp(es.reduce((s,e)=>s+((Number(e.max)||0)>0?(Number(e.earned)||0)/(Number(e.max))*100:0),0)/es.length)
+    :null;
+  const hw=b.homeworks||[];
+  const diligence=hw.length
+    ?clamp(hw.reduce((s,h)=>{const t=Number(h.problems_total)||0;const cc=Number(h.problems_correct)||0;return s+(t>0?cc/t*100:0);},0)/hw.length)
+    :null;
+
+  // 신규 — 원점수 % 만. 과제는 빠진다.
+  const nw=weightedAvg([
+    {key:'weekly', weight:READINESS_WEIGHTS.weekly, value:weeklyRaw},
+    {key:'mastery',weight:READINESS_WEIGHTS.mastery,value:mastery},
+    {key:'essay',  weight:READINESS_WEIGHTS.essay,  value:essay}]);
+  /* 구 — weeklyScaled 우선(없으면 원점수) + 과제 10%.
+     ★ 이 분기를 "정리"하지 마라. 과거 스냅샷과 같은 값이 나와야 비교가 성립한다. */
+  const lw=weightedAvg([
+    {key:'weekly', weight:30,value:weeklyScaledEwma!=null?weeklyScaledEwma:weeklyRaw},
+    {key:'mastery',weight:20,value:mastery},
+    {key:'essay',  weight:15,value:essay},
+    {key:'homework',weight:10,value:diligence}]);
+
+  return {readiness:nw.value,parts:nw.parts,coverage,
+          weeklyRaw,weeklyScaledEwma,diligence,
+          readinessLegacy:lw.value,partsLegacy:lw.parts,
+          formula:READINESS_FORMULA,formulaVersion:'v2'};
 }
 
 /* ── 회차 난이도 보정 (코호트 z-표준화) ──
@@ -409,5 +451,6 @@ export { ewma, computeReadiness, weightedRecent3, shortfallContribution, hwAccur
          sessionPercentRows, cohortSessionStats, standardizeWeekly,
          cellRateSince, cellStatsSince, cellPooledRecent, judgePrescription, prescriptionJudgment,
          essayTotals, essayRangeFor, PRESCRIPTION_DELTA, RECHECK_MIN_POINTS,
+         READINESS_WEIGHTS, READINESS_FORMULA, READINESS_V2_SINCE,
          hasEnoughSample, SAMPLE_GATE, pointShareFromRecords,
          scoreTags, errorAxisFromRecords, UNCLASSIFIED_TAG };

@@ -9,7 +9,7 @@ import { bindDemoSwitch, demoSwitchHTML, destroyCharts } from './ui.js';
 import { $, esc } from './util.js';
 import { renderAdmission } from './views/admission.js';
 import { renderCounseling, renderStudentCounsel } from './views/counseling.js';
-import { renderDashboard } from './views/dashboard.js';
+import { ensureReadinessSnapshots, renderDashboard } from './views/dashboard.js';
 import { renderDiagnosis } from './views/diagnosis.js';
 import { renderEssays } from './views/essays.js';
 import { renderHomeworkCheck } from './views/homework.js';
@@ -86,6 +86,12 @@ function navigate(tab){
     essays:renderEssays,admission:renderAdmission,report:renderReport,universities:renderUniversities,settings:renderSettings,
     s_report:renderReport,s_counsel:renderStudentCounsel,s_diagnosis:renderDiagnosis,s_essays:renderEssays,s_targets:renderStudentTargets};
   (R[tab]||(x=>x.innerHTML='<p class="muted">준비 중</p>'))(c);
+  /* 준비도 스냅샷을 하루 1회 적재한다 — **어느 화면을 열든**.
+     학생 리포트가 이 스냅샷을 읽으므로(4-2), 적재가 "대시보드를 연 날"에만 돌면
+     강사가 대시보드를 건너뛴 날은 학생 화면이 통째로 '산출 대기'가 된다.
+     대시보드는 렌더 과정에서 이미 같은 계산을 하고 적재하므로 중복 호출하지 않는다.
+     관리자·비데모가 아니면 함수가 즉시 빠진다. await 하지 않는다(화면을 막지 않는다). */
+  if(tab!=='dashboard')ensureReadinessSnapshots();
 }
 
 /* 학부모 링크 토큰을 정식 세션으로 승격한다.

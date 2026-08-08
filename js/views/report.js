@@ -4,7 +4,7 @@ import { COGNITIONS, TODAY, UNITS } from '../config.js';
 import { db, loadContext, studentBundle } from '../db.js';
 import { svg } from '../icons.js';
 import { app } from '../state.js';
-import { bindStudentSelector, studentSelector } from '../ui.js';
+import { bindStudentSelector, readinessFormulaHTML, studentSelector } from '../ui.js';
 import { $, daysUntil, ddayLabel, esc, fmtDate, r1, todayStr } from '../util.js';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -19,8 +19,29 @@ async function renderReport(c){
   const wp=b.weeklyPercents;
   const printBar=`<div class="selectbar"><button class="btn line sm no-print" id="printBtn">${svg('print','sm')}인쇄/PDF</button></div>`;
 
-  // KPI (전체 누적)
-  const {readiness,coverage}=computeReadiness({weeklyPercents:b.weeklyPercents,weeklyScaled:b.weeklyScaled,questionRecords:b.questionRecords,essays:b.essayInputs,homeworks:b.homeworks});
+  /* KPI (전체 누적)
+     ★ 학생 화면은 준비도를 **재계산하지 않는다.** 학생 세션은 RLS 때문에 본인 점수만
+       보여 코호트가 n<2 가 되고, 그러면 강사 화면과 다른 숫자가 나온다(4-2).
+       readiness_snapshots 의 최신 값을 그대로 읽고, 없으면 '산출 대기'로 적는다 —
+       없다고 재계산으로 때우면 그 순간 두 화면의 숫자가 다시 갈라진다.
+     coverage 는 준비도가 아니라 진도 진행 상황이라 학생 화면에서도 그대로 계산한다. */
+  const rd=computeReadiness({weeklyPercents:b.weeklyPercents,weeklyScaled:b.weeklyScaled,questionRecords:b.questionRecords,essays:b.essayInputs,homeworks:b.homeworks});
+  const coverage=rd.coverage;
+  /* 데모는 예외다 — RLS 가 없어 학생 역할로도 전체 점수가 보이고, 따라서 코호트가
+     정상이라 재계산 값이 강사 화면과 **완전히 같다**. 데모 저장소에는 스냅샷 자체가
+     없으므로 여기서 읽으면 화면 전체가 '산출 대기'가 된다. */
+  const useSnap=readonly&&!app.DEMO;
+  const snap=useSnap?await db.latestReadinessSnapshot(sid):null;
+  const readiness=useSnap?(snap&&snap.readiness!=null?Number(snap.readiness):null):rd.readiness;
+  // 스냅샷이 없을 때(readonly)와 값이 없을 때(admin)를 화면에서 구분한다.
+  const readinessCell=readiness!=null
+    ?r1(readiness)+'<small>%</small>'
+    :(useSnap?'<span style="font-size:15px">산출 대기</span>':'-');
+  const readinessNote=useSnap
+    ?(snap&&snap.snap_date
+      ?`<span class="muted" style="font-size:11px">${esc(fmtDate(snap.snap_date))} 산출 기준</span>`
+      :'<span class="muted" style="font-size:11px">아직 산출되지 않았습니다. 강사가 확인 후 반영됩니다.</span>')
+    :'';
   // 최근 8주 처방 성과 요약
   const rxAll=await db.listPrescriptions(sid);
   const since=new Date(TODAY.getTime()-56*86400000);
@@ -72,12 +93,18 @@ async function renderReport(c){
         <div class="chip ${st?.status==='퇴원'?'red':'green'}">${esc(st?.status||'재원')}</div>
       </div>
       <div class="kpi-grid" style="margin-bottom:16px">
-        <div class="kpi"><div class="lbl">준비도</div><div class="val">${readiness==null?'-':r1(readiness)+'<small>%</small>'}</div></div>
+        <div class="kpi"><div class="lbl">준비도</div><div class="val">${readinessCell}</div>${readinessNote}</div>
         <div class="kpi"><div class="lbl">최근 회차 점수</div><div class="val">${curPct==null?'-':r1(curPct)+'<small>%</small>'} ${delta==null?'':(delta>=0?'<span class="delta up" style="font-size:13px">'+svg('arrowUp','xs')+r1(Math.abs(delta))+'%p</span>':'<span class="delta down" style="font-size:13px">'+svg('arrowDown','xs')+r1(Math.abs(delta))+'%p</span>')}</div></div>
         <div class="kpi"><div class="lbl">과제 누적 정답률</div><div class="val">${hwAcc==null?'-':r1(hwAcc)+'<small>%</small>'}</div></div>
         <div class="kpi"><div class="lbl">취약 셀 수</div><div class="val">${weakCells}<small> 개</small></div></div>
       </div>
-      <div class="muted" style="font-size:12px;margin:-8px 0 6px">과제 평균 풀이 시간: <b>${hwTime==null?'-':r1(hwTime)+'분/회'}</b> · 진도 커버리지: <b>${coverage==null?'-':Math.round(coverage)+'%'}</b></div>
+      ${readinessFormulaHTML()}
+      <div class="muted" style="font-size:12px;margin:-8px 0 6px">과제 정답률(성실성): <b>${rd.diligence==null?'-':r1(rd.diligence)+'%'}</b> · 과제 평균 풀이 시간: <b>${hwTime==null?'-':r1(hwTime)+'분/회'}</b> · 진도 커버리지: <b>${coverage==null?'-':Math.round(coverage)+'%'}</b></div>
+      ${/* 회차 난이도 대비(z)는 **관리자 화면에만** 병기한다.
+            학생 세션은 RLS 로 본인 점수만 보여 코호트가 n<2 이고, 그때
+            standardizeWeekly 는 보정을 포기하고 원점수를 그대로 돌려준다.
+            그 값을 "난이도 대비"라고 적으면 원점수를 보정값으로 잘못 읽게 된다. */''}
+      ${readonly?'':`<div class="muted" style="font-size:12px;margin:0 0 6px">회차 난이도 대비(참고): <b>${rd.weeklyScaledEwma==null?'비교군 부족':r1(rd.weeklyScaledEwma)}</b> <span style="font-size:11px">같은 회차를 본 학생들 평균이 50, 10 차이가 표준편차 1개입니다. 준비도 점수에는 넣지 않습니다.</span></div>`}
       <div class="muted" style="font-size:12px;margin:0 0 14px">처방 성과: ${rxLine}</div>
       <div class="grid2">
         <div><h3 style="font-size:13px">주간 점수 추이</h3><canvas id="repLine" height="150"></canvas></div>

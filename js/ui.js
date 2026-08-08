@@ -6,9 +6,24 @@
    ※ 기존 화면 코드는 아직 이 규칙을 따르지 않는다(Phase 2는 순수 분할이라 동작을 동결).
      새로 작성하거나 손대는 화면부터 patchRegion 을 적용한다.
    ═══════════════════════════════════════════════════════════════════ */
+import { READINESS_FORMULA, READINESS_V2_SINCE } from './calc.js';
 import { db } from './db.js';
 import { app } from './state.js';
 import { $, esc } from './util.js';
+
+/* 준비도 계산식 공개 — 접이식 한 줄.
+   지금까지 "준비도 62%" 만 보여 주고 62 가 무엇인지 아무도 알려주지 않았다.
+   강사·학생·(학부모 제외) 화면이 **같은 문장**을 보도록 여기 한 곳에 둔다.
+   ★ 학부모 화면에는 넣지 않는다 — 준비도 자체를 학부모에게 보이지 않기 때문이다
+     (coverage 가 낮으면 준비도가 뻥튀기된다. js/views/parent.js 의 주석 참고). */
+export function readinessFormulaHTML(){
+  return `<details style="margin:-2px 0 10px"><summary style="cursor:pointer;font-size:11.5px;color:var(--muted)">준비도 계산식</summary>
+    <div class="muted" style="font-size:11.5px;line-height:1.7;margin-top:4px">
+      ${esc(READINESS_FORMULA)}<br>
+      과제 정답률(성실성)·진도 커버리지는 <b>점수에 넣지 않습니다</b> — 실력이 아니라 수행·진행 상황이라 섞으면 실력을 가립니다.<br>
+      회차 난이도 보정(z)은 참고 지표로만 병기합니다. 산출 기준 변경일 ${esc(READINESS_V2_SINCE)}.
+    </div></details>`;
+}
 
 /* 특정 요소의 내용만 교체한다. 대상이 없으면 아무 일도 하지 않는다(렌더 경합 방지). */
 export function patchRegion(elId, html){

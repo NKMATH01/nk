@@ -46,26 +46,22 @@ t('alpha 를 키우면 최신값 쪽으로 더 붙는다', () => {
   near(ewma([0, 100], 0.9), 90);
 });
 
+/* ── computeReadiness ──
+   0020 에서 산식이 바뀌었다. **구 산식 테스트를 지우지 않고** readinessLegacy /
+   partsLegacy 를 검증하도록 옮겼다(아래 '구 산식' 블록). 옮긴 것은 신·구 값이
+   실제로 달라지는 3건뿐이고, 나머지는 두 산식의 결과가 같아 그대로 두었다. */
 console.log('computeReadiness — 결측 항목 가중치 재정규화');
 t('입력이 전혀 없으면 readiness=null', () => {
   const r = computeReadiness({});
   assert.equal(r.readiness, null);
   assert.deepEqual(r.parts, []);
+  assert.equal(r.readinessLegacy, null);
 });
 t('주간점수만 있으면 그 값이 곧 readiness (30/30 으로 재정규화)', () => {
   const r = computeReadiness({ weeklyPercents: [80] });
   assert.equal(r.parts.length, 1);
   assert.equal(r.parts[0].key, 'weekly');
   near(r.readiness, 80);
-});
-t('주간점수+과제: 30:10 비율로 가중 평균', () => {
-  // weekly 80(가중30), homework 5/10=50%(가중10) -> 80*0.75 + 50*0.25 = 72.5
-  const r = computeReadiness({
-    weeklyPercents: [80],
-    homeworks: [{ problems_total: 10, problems_correct: 5 }],
-  });
-  assert.equal(r.parts.length, 2);
-  near(r.readiness, 72.5);
 });
 t('coverage 는 준비도 가중 항목에서 빠지고 별도 값으로 반환된다', () => {
   const r = computeReadiness({
@@ -83,7 +79,46 @@ t('coverage 는 문항기록이 없으면 null', () => {
   assert.equal(computeReadiness({}).coverage, null);
   assert.equal(computeReadiness({ weeklyPercents: [80] }).coverage, null);
 });
-t('모든 항목이 있으면 가중치 합이 75(=30+20+15+10)', () => {
+t('값은 0~100 으로 clamp 된다', () => {
+  const r = computeReadiness({ weeklyPercents: [999] });
+  near(r.readiness, 100);
+  near(r.readinessLegacy, 100);
+});
+
+console.log('computeReadiness — 신규 산식(0020): 척도 혼합 제거 · 과제 분리');
+t('신규 산식은 weeklyScaled(z)를 쓰지 않는다 — 원점수 %로 계산한다', () => {
+  const r = computeReadiness({ weeklyPercents: [90], weeklyScaled: [30] });
+  near(r.readiness, 90);          // z 를 무시하고 원점수
+  near(r.readinessLegacy, 30);    // 구 산식은 z 를 썼다
+});
+t('z 는 버리지 않고 weeklyScaledEwma 로 따로 나온다(회차 난이도 대비 참고 지표)', () => {
+  const r = computeReadiness({ weeklyPercents: [90], weeklyScaled: [30] });
+  near(r.weeklyRaw, 90);
+  near(r.weeklyScaledEwma, 30);
+  // weeklyScaled 가 없으면 참고 지표도 없다(비교군 없음)
+  assert.equal(computeReadiness({ weeklyPercents: [90] }).weeklyScaledEwma, null);
+});
+t('과제는 실력 가중에서 빠지고 diligence(성실성)로 따로 나온다', () => {
+  const r = computeReadiness({
+    weeklyPercents: [80],
+    homeworks: [{ problems_total: 10, problems_correct: 5 }],
+  });
+  assert.deepEqual(r.parts.map(p => p.key), ['weekly']);   // 과제가 가중 항목에 없다
+  near(r.readiness, 80);
+  near(r.diligence, 50);
+  near(r.readinessLegacy, 72.5);   // 구 산식은 과제를 10% 로 섞었다
+});
+t('과제만 있으면 신규 readiness=null (성실성만으로는 실력을 재지 않는다)', () => {
+  const r = computeReadiness({ homeworks: [{ problems_total: 10, problems_correct: 5 }] });
+  assert.equal(r.readiness, null);
+  assert.deepEqual(r.parts, []);
+  near(r.diligence, 50);
+  near(r.readinessLegacy, 50);
+});
+t('과제 기록이 없으면 diligence 는 null', () => {
+  assert.equal(computeReadiness({ weeklyPercents: [80] }).diligence, null);
+});
+t('신규 산식의 가중치 합은 65(=30+20+15)', () => {
   const r = computeReadiness({
     weeklyPercents: [60],
     questionRecords: [
@@ -93,21 +128,52 @@ t('모든 항목이 있으면 가중치 합이 75(=30+20+15+10)', () => {
     essays: [{ earned: 30, max: 50 }],
     homeworks: [{ problems_total: 10, problems_correct: 6 }],
   });
-  assert.equal(r.parts.reduce((s, p) => s + p.weight, 0), 75);
-  const manual = r.parts.reduce((s, p) => s + p.value * (p.weight / 75), 0);
+  assert.equal(r.parts.reduce((s, p) => s + p.weight, 0), 65);
+  assert.deepEqual(r.parts.map(p => p.key), ['weekly', 'mastery', 'essay']);
+  const manual = r.parts.reduce((s, p) => s + p.value * (p.weight / 65), 0);
   near(r.readiness, manual);
-  // 진도 커버리지는 별도로 나온다(2/6 단원)
+});
+t('화면에 공개할 계산식 문자열이 함께 나온다', () => {
+  const r = computeReadiness({ weeklyPercents: [80] });
+  assert.equal(typeof r.formula, 'string');
+  assert.ok(r.formula.includes('30%'));
+  assert.equal(r.formulaVersion, 'v2');
+});
+
+/* ── 구 산식 (0020 이전) ──
+   readiness_snapshots 의 과거 행이 이 산식으로 적재됐다. 값이 달라지면 과거 추이가
+   거짓이 되므로 아래 3건은 **지우지 않고** readinessLegacy 검증으로 옮겨 남겼다. */
+console.log('computeReadiness — 구 산식(readinessLegacy) 보존');
+t('[구] 주간점수+과제: 30:10 비율로 가중 평균', () => {
+  // weekly 80(가중30), homework 5/10=50%(가중10) -> 80*0.75 + 50*0.25 = 72.5
+  const r = computeReadiness({
+    weeklyPercents: [80],
+    homeworks: [{ problems_total: 10, problems_correct: 5 }],
+  });
+  assert.equal(r.partsLegacy.length, 2);
+  near(r.readinessLegacy, 72.5);
+});
+t('[구] 모든 항목이 있으면 가중치 합이 75(=30+20+15+10)', () => {
+  const r = computeReadiness({
+    weeklyPercents: [60],
+    questionRecords: [
+      { unit: '미분', points: 10, earned: 6 },
+      { unit: '적분', points: 10, earned: 6 },
+    ],
+    essays: [{ earned: 30, max: 50 }],
+    homeworks: [{ problems_total: 10, problems_correct: 6 }],
+  });
+  assert.equal(r.partsLegacy.reduce((s, p) => s + p.weight, 0), 75);
+  const manual = r.partsLegacy.reduce((s, p) => s + p.value * (p.weight / 75), 0);
+  near(r.readinessLegacy, manual);
+  // 진도 커버리지는 신·구 공통으로 별도로 나온다(2/6 단원)
   near(r.coverage, 200 / 6);
 });
-t('weeklyScaled 가 있으면 원점수 대신 그것을 쓴다', () => {
+t('[구] weeklyScaled 가 있으면 원점수 대신 그것을 쓴다', () => {
   const raw = computeReadiness({ weeklyPercents: [90] });
   const scaled = computeReadiness({ weeklyPercents: [90], weeklyScaled: [30] });
-  near(raw.readiness, 90);
-  near(scaled.readiness, 30);
-});
-t('값은 0~100 으로 clamp 된다', () => {
-  const r = computeReadiness({ weeklyPercents: [999] });
-  near(r.readiness, 100);
+  near(raw.readinessLegacy, 90);
+  near(scaled.readinessLegacy, 30);
 });
 
 console.log('weightedRecent3 — 최근 3회 0.2/0.3/0.5 가중');

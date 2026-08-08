@@ -3,7 +3,7 @@ import { admitBand, computeReadiness, essayRangeFor, ewma } from '../calc.js';
 import { db, loadContext, studentBundle } from '../db.js';
 import { svg } from '../icons.js';
 import { app } from '../state.js';
-import { bindStudentSelector, studentSelector } from '../ui.js';
+import { bindStudentSelector, readinessFormulaHTML, studentSelector } from '../ui.js';
 import { $, clamp, ddayLabel, esc, fmtDate, r1 } from '../util.js';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -13,18 +13,26 @@ async function renderAdmission(c){
   c.innerHTML=await studentSelector()+'<p class="muted">불러오는 중...</p>';bindStudentSelector(()=>renderAdmission(c));
   const sid=app.cur.studentId;if(!sid){c.querySelector('p').textContent='학생을 선택하세요.';return;}
   const ctx=await loadContext();const b=await studentBundle(sid,ctx);
-  const {readiness,parts,coverage}=computeReadiness({weeklyPercents:b.weeklyPercents,weeklyScaled:b.weeklyScaled,questionRecords:b.questionRecords,essays:b.essayInputs,homeworks:b.homeworks});
+  const rd=computeReadiness({weeklyPercents:b.weeklyPercents,weeklyScaled:b.weeklyScaled,questionRecords:b.questionRecords,essays:b.essayInputs,homeworks:b.homeworks});
+  const {readiness,parts,coverage}=rd;
   const partMap={};parts.forEach(p=>partMap[p.key]=p.value);
-  // 주차별 준비도 스파크라인(간이: 누적 회차까지 EWMA 기반 재계산)
-  const sparkSrc=(b.weeklyScaled&&b.weeklyScaled.length)?b.weeklyScaled:b.weeklyPercents;
+  /* 주차별 준비도 스파크라인(간이: 누적 회차까지 EWMA 기반 재계산).
+     ★ 준비도 산식이 z 를 쓰지 않게 됐으므로(0020) 스파크라인도 **원점수**로 그린다.
+       옆의 숫자는 원점수 기반인데 선만 z 로 그리면 둘이 어긋나 보인다. */
+  const sparkSrc=b.weeklyPercents;
   const spark=[];for(let i=1;i<=sparkSrc.length;i++){spark.push(clamp(ewma(sparkSrc.slice(0,i))));}
   const targets=ctx.targets.filter(t=>t.student_id===sid).sort((a,b)=>a.priority-b.priority);
 
   const rawAvg=b.weeklyPercents.length?b.weeklyPercents[b.weeklyPercents.length-1]:null;
-  const labels={weekly:'주간테스트 EWMA(난이도 보정)',mastery:'마스터리(득점)',essay:'첨삭 점수',homework:'과제 수행'};
-  const evidence=['weekly','mastery','essay','homework'].map(k=>`<div class="kv"><span>${esc(labels[k])}</span><b>${partMap[k]==null?'N/A':r1(partMap[k])+'%'}</b></div>`).join('')
+  /* 가중 항목은 셋뿐이다(0020) — 과제는 실력이 아니라 성실성이라 아래 '미반영' 묶음으로 내려갔다.
+     주간테스트도 이제 **원점수 %** 다. z(난이도 보정)는 참고 지표로만 병기한다. */
+  const labels={weekly:'주간테스트 EWMA(원점수)',mastery:'마스터리(득점)',essay:'첨삭 점수'};
+  const off=(label,val,note)=>`<div class="kv"><span>${esc(label)} <span class="muted" style="font-size:11px">(${esc(note)})</span></span><b>${val}</b></div>`;
+  const evidence=['weekly','mastery','essay'].map(k=>`<div class="kv"><span>${esc(labels[k])}</span><b>${partMap[k]==null?'N/A':r1(partMap[k])+'%'}</b></div>`).join('')
     +`<div class="kv"><span>최근 회차 원점수</span><b>${rawAvg==null?'N/A':r1(rawAvg)+'%'}</b></div>`
-    +`<div class="kv"><span>진도 커버리지 <span class="muted" style="font-size:11px">(준비도 미반영)</span></span><b>${coverage==null?'N/A':Math.round(coverage)+'%'}</b></div>`;
+    +off('회차 난이도 대비 z',rd.weeklyScaledEwma==null?'N/A':r1(rd.weeklyScaledEwma),'참고 지표 · 준비도 미반영')
+    +off('과제 정답률',rd.diligence==null?'N/A':r1(rd.diligence)+'%','성실성 · 준비도 미반영')
+    +off('진도 커버리지',coverage==null?'N/A':Math.round(coverage)+'%','진행 상황 · 준비도 미반영');
 
   const cards=targets.length?targets.map(t=>{const u=ctx.universities.find(x=>x.id===t.university_id);if(!u)return '';
     const ab=admitBand(readiness,u);
@@ -57,7 +65,7 @@ async function renderAdmission(c){
       <div class="card"><h3>${svg('trending')}목표 대학별 대비 현황 <span class="sub">첨삭 점수 실적 구간과 작년 합격선 비교</span></h3>
         <div class="grid2">${cards}</div></div>
       <div class="card"><h3>${svg('activity')}준비도 근거</h3>
-        <div style="font-size:32px;font-weight:800;margin-bottom:10px">${readiness==null?'N/A':r1(readiness)+'%'}</div>${evidence}</div>
+        <div style="font-size:32px;font-weight:800;margin-bottom:6px">${readiness==null?'N/A':r1(readiness)+'%'}</div>${readinessFormulaHTML()}${evidence}</div>
     </div>
     ${await calibrationCardHTML(ctx)}
     <div class="card note-blue">본 지표는 학습 관리를 위한 참고 자료이며 합격을 보장하지 않습니다. 첨삭 점수 구간은 우리 학원 채점 기준이고 대학 합격선은 각 대학 기준이라, 산출 기준이 확인된 대학만 격차를 표시합니다. 표본이 적을수록(근거 표본 수 확인) 변동이 큽니다. 반영 비율·수능최저 등은 각 대학 모집요강을 확인하세요.</div>`;
