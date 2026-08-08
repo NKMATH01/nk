@@ -396,9 +396,17 @@ function openTagMenu(td,dedItems){
     const inp=td.querySelector('input');const v=inp.value;
     if(v===''||isNaN(Number(v))){m.className='tm_msg msg err';m.textContent='점수를 먼저 입력하세요.';return;}
     const earned=Number(v);const note=panel.querySelector('.tm_note').value.trim()||null;
-    // 체크된 감점 항목을 그대로 남긴다(다음에 셀을 열 때 복원). 체크가 없으면 null.
+    /* 체크된 감점 항목을 그대로 남긴다(다음에 셀을 열 때 복원). 체크가 없으면 null.
+       tag 를 함께 남긴다(0018) — 지금까지는 label·points 만 남기고 버렸다.
+       **복원 매칭 기준은 label+points 그대로다**(restoreDedChecks 참고).
+       tag 를 매칭에 넣으면 tag 가 없는 기존 기록이 복원되지 않는다. */
     const dedChks=[...panel.querySelectorAll('.tm_dedchk:checked')];
-    const dedSaved=dedChks.length?dedChks.map(c=>({label:items[Number(c.dataset.i)].label,points:Number(c.dataset.pts)||0})):null;
+    const dedSaved=dedChks.length?dedChks.map(c=>({label:items[Number(c.dataset.i)].label,points:Number(c.dataset.pts)||0,tag:c.dataset.tag||null})):null;
+    /* 체크된 감점들의 태그 전부를 배열로 남긴다(0018). 강사는 이미 여러 개를
+       체크하고 있는데 지금까지는 가장 큰 것 하나만 저장됐다 — **추가 작업 0**.
+       수동 선택한 주 원인(selTag)도 함께 넣는다. 강사가 제안을 덮어썼을 때
+       그 판단이 배열에서 빠지면 오류유형 축에서 통째로 사라진다. */
+    const tagSet=[...new Set([...dedChks.map(c=>c.dataset.tag||''),selTag||''].filter(Boolean))];
     const file=panel.querySelector('.tm_file').files[0];
     let photoUrl=removePhoto?null:(curPhoto||null),demoPhoto=false;
     if(file){
@@ -416,7 +424,8 @@ function openTagMenu(td,dedItems){
     }
     // note_source='teacher' — 이 경로의 메모는 전부 강사가 직접 친 것이다(빈 값이면 "메모 없음"이 강사 판단).
     // AI few-shot 이 자기 출력을 되먹임하지 않도록 출처를 남긴다(0017).
-    try{await db.saveScores([{question_id:td.dataset.q,student_id:td.dataset.s,earned,wrong_reason:selTag||null,reason_note:note,note_source:'teacher',photo_url:photoUrl,deduction_checks:dedSaved}]);
+    // wrong_reason 은 계속 write-through 한다 — 주 원인(가장 큰 감점의 태그)이며 배열이 대체하지 않는다.
+    try{await db.saveScores([{question_id:td.dataset.q,student_id:td.dataset.s,earned,wrong_reason:selTag||null,wrong_reason_tags:tagSet.length?tagSet:null,reason_note:note,note_source:'teacher',photo_url:photoUrl,deduction_checks:dedSaved}]);
       td.dataset.tag=selTag||'';td.dataset.note=note||'';td.dataset.photo=photoUrl||'';td.dataset.ded=dedSaved?JSON.stringify(dedSaved):'';
       let dot=td.querySelector('.tagdot');const hasMark=selTag||note||photoUrl;
       if(hasMark){if(!dot){dot=document.createElement('span');dot.className='tagdot';td.appendChild(dot);}dot.title=selTag||'메모/사진';}

@@ -1,5 +1,5 @@
 /* 순수 계산 로직 — 준비도/히트맵/실점기여도/밴드. 부수효과 0. js/calc.test.mjs 로 검증한다. */
-import { COGNITIONS, UNITS } from './config.js';
+import { COGNITIONS, RUBRIC_TO_ERROR, UNITS } from './config.js';
 import { clamp } from './util.js';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -179,7 +179,10 @@ function hwAccuracyAvg(records){if(!records||!records.length)return null;
 function hwTimeAvg(records){const r=(records||[]).filter(h=>h.time_min!=null&&h.time_min!=='');if(!r.length)return null;
   return r.reduce((s,h)=>s+(Number(h.time_min)||0),0)/r.length;}
 
-// 6x4 히트맵 (최근 3회 가중) + 셀 상세
+/* 6x4 히트맵 (최근 3회 가중) + 셀 상세
+   셀은 {rate, n, points, sessions}. rate·n 은 기존 그대로이고 points(누적 배점)와
+   sessions(관측된 서로 다른 회차 수)는 표본 게이트(hasEnoughSample)가 쓰려고 더한 값이다.
+   **rate 계산은 손대지 않았다** — 게이트는 표시 여부만 바꾸고 값 자체를 바꾸지 않는다. */
 function heatFromRecords(records){
   const bySess={}; // week -> unit -> cog -> {earned,pts}
   records.forEach(r=>{const w=r.week||0;
@@ -189,11 +192,127 @@ function heatFromRecords(records){
   const weeks=Object.keys(bySess).map(Number).sort((a,b)=>a-b);
   const grid={};
   UNITS.forEach(u=>{grid[u]={};COGNITIONS.forEach(cg=>{
-    const rates=[];let n=0;
-    weeks.forEach(w=>{const c=bySess[w]?.[u]?.[cg];if(c&&c.pts>0){rates.push(c.earned/c.pts*100);n+=c.n;}});
-    grid[u][cg]={rate:weightedRecent3(rates),n};
+    const rates=[];let n=0,pts=0;
+    weeks.forEach(w=>{const c=bySess[w]?.[u]?.[cg];if(c&&c.pts>0){rates.push(c.earned/c.pts*100);n+=c.n;pts+=c.pts;}});
+    grid[u][cg]={rate:weightedRecent3(rates),n,points:pts,sessions:rates.length};
   });});
   return grid;
+}
+
+/* ── 표본 게이트 ──
+   히트맵 셀 하나를 "진단해도 되는 표본"으로 볼지 판정한다.
+   문항 1개를 틀려 rate=0 이 된 셀이 취약 1순위로 올라가고, 그 0% 가 처방
+   baseline_rate 로 **박제되는 것**을 막는다.
+
+   문항 3개 이상 · 누적 배점 6점 이상 · **서로 다른 회차 2개 이상**.
+   회차 조건이 따로 필요한 이유: 한 회차에 몰린 3문항의 정답률은 그 회차
+   난이도의 함수이지 학생 능력의 함수가 아니다. 그 주 문제가 유난히 어려웠으면
+   셀 전체가 통째로 취약으로 잘못 찍히고, 다음 회차에 저절로 되돌아온다.
+
+   게이트는 **순위에서 빼는 것**이지 값을 지우는 것이 아니다. 히트맵에는
+   회색으로 남긴다 — 표본이 없다는 사실 자체가 다음 출제에 주는 정보다. */
+const SAMPLE_GATE={n:3,points:6,sessions:2};
+function hasEnoughSample(cell){
+  if(!cell)return false;
+  return (Number(cell.n)||0)>=SAMPLE_GATE.n
+    &&(Number(cell.points)||0)>=SAMPLE_GATE.points
+    &&(Number(cell.sessions)||0)>=SAMPLE_GATE.sessions;
+}
+
+/* ── 실점기여도의 배점 비중 ──
+   rate 는 최근 3회 가중인데 pointShare 가 전 기간이면 시간창이 어긋난다.
+   예전에 많이 출제됐다가 최근에는 안 나오는 셀이 과대평가되고, 그 셀이
+   우선 보완 순위 위쪽을 차지한다. 같은 최근 N회(기본 3회)의 배점만으로 낸다.
+   반환: {'단원|사고': 0..1}. 창 안에 배점이 하나도 없으면 빈 객체.
+   회차 구분은 heatFromRecords 와 같은 기준(week, 없으면 0)을 쓴다. */
+function pointShareFromRecords(records,windowSessions=3){
+  const rs=records||[];
+  const weeks=[...new Set(rs.map(r=>r.week||0))].sort((a,b)=>a-b);
+  const keep=new Set(weeks.slice(-windowSessions));
+  const out={};let tot=0;
+  rs.forEach(r=>{if(!keep.has(r.week||0))return;
+    const p=Number(r.points)||0;if(!p)return;
+    const k=r.unit+'|'+r.cognition;out[k]=(out[k]||0)+p;tot+=p;});
+  if(!tot)return {};
+  Object.keys(out).forEach(k=>{out[k]=out[k]/tot;});
+  return out;
+}
+
+/* ── 오답원인 태그 읽기 ──
+   **모든 소비처는 이 함수만 쓴다.** 배열(0018)과 단일 컬럼이 공존하므로
+   폴백을 여러 군데에 흩어 두면 화면마다 다른 숫자가 나온다.
+     wrong_reason_tags 가 비어 있지 않으면 → 그 배열(중복 제거)
+     비어 있거나 null 이면              → [wrong_reason] 중 truthy 만
+   배열이 없는 과거 기록은 지금까지와 똑같이 단일 원인으로 읽힌다. */
+function scoreTags(sc){
+  if(!sc)return [];
+  const arr=Array.isArray(sc.wrong_reason_tags)?sc.wrong_reason_tags.filter(Boolean):[];
+  if(arr.length)return [...new Set(arr)];
+  return sc.wrong_reason?[sc.wrong_reason]:[];
+}
+
+/* ── 오류유형 축 ──
+   주간테스트 태그와 첨삭 채점기준을 **"흘린 점수"** 단위로 합산한다.
+   문항 수로 세지 않는 이유: 첨삭은 한 문항에 기준이 3개 이상이라 문항 수로 세면
+   첨삭이 주간테스트를 압도한다. 점수 단위여야 "28점 손실 → 무엇부터"로 이어진다.
+
+   errorAxisFromRecords(questionRecords, essays, opts)
+     opts.sinceDate  이 날짜 이후(포함)만 집계. 없으면 전 기간
+   반환은 [{tag, lostPoints, share, n, sources:{test,essay}}] 배열(손실 내림차순)이며,
+   **집계에서 빠진 것**을 배열의 속성으로 함께 돌려준다 — 제외했다는 사실이
+   화면에 표시되어야 하기 때문이다.
+     .skippedLegacyEssays  기준별 정보가 없어 제외한 구형(3분할) 첨삭 건수
+     .untaggedLostPoints   태그가 없어 원인을 알 수 없는 주간테스트 실점
+     .totalLostPoints      share 의 분모 */
+const UNCLASSIFIED_TAG='미분류';
+// 첨삭 판정 → 득점. js/views/essays.js markScore 와 같은 규칙(O 전액 / P 절반 / X 0).
+function markEarned(points,mark){const p=Number(points)||0;return mark==='O'?p:(mark==='P'?p/2:0);}
+function errorAxisFromRecords(questionRecords,essays,opts){
+  const since=opts&&opts.sinceDate?String(opts.sinceDate):null;
+  const map={};
+  const add=(tag,lost,src)=>{
+    if(!tag||!(lost>0))return;
+    const e=(map[tag]=map[tag]||{tag,lostPoints:0,share:0,n:0,sources:{test:0,essay:0}});
+    e.lostPoints+=lost;e.n++;e.sources[src]+=lost;
+  };
+  /* 주간테스트 — 그 문항에서 잃은 점수(배점-득점)를 태그들에 배분한다.
+     태그가 여러 개면 **균등 분배**한다. 어느 태그가 몇 점을 유발했는지는
+     데이터에 없다(강사는 감점 항목을 체크할 뿐 태그별로 점수를 나누지 않는다).
+     균등이 가장 약한 가정이며, 한 태그에 몰아주면 없는 사실을 지어내는 것이 된다. */
+  let untagged=0;
+  (questionRecords||[]).forEach(r=>{
+    if(!r)return;
+    if(since&&!(r.date&&String(r.date)>=since))return;
+    const lost=(Number(r.points)||0)-(Number(r.earned)||0);
+    if(!(lost>0))return;
+    const tags=scoreTags(r);
+    // 태그가 없으면 원인을 모른다. '미분류'로 채우지 않고 뺀 양만 남긴다.
+    if(!tags.length){untagged+=lost;return;}
+    tags.forEach(t=>add(t,lost/tags.length,'test'));
+  });
+  /* 첨삭 — mark 가 P/X 인 기준에서 잃은 점수를 그 기준의 태그에 넣는다.
+     태그 결정 순서: criteria[].tag → RUBRIC_TO_ERROR[label] → '미분류'. */
+  let skippedLegacyEssays=0;
+  (essays||[]).forEach(e=>{
+    if(!e)return;
+    if(since&&!(e.week_date&&String(e.week_date)>=since))return;
+    /* items 가 없는 구형 3분할 기록(0014 이전)은 기준별 판정이 없다.
+       3분할 득점을 조건해석/풀이과정/최종답안으로 되돌려 매핑하면 없던
+       기준별 판정을 지어내는 셈이라 **집계에서 제외**하고 건수만 남긴다. */
+    if(!Array.isArray(e.items)){skippedLegacyEssays++;return;}
+    e.items.forEach(it=>((it&&it.criteria)||[]).forEach(cr=>{
+      if(!cr||(cr.mark!=='P'&&cr.mark!=='X'))return;
+      const p=Number(cr.points)||0;
+      add(cr.tag||RUBRIC_TO_ERROR[cr.label]||UNCLASSIFIED_TAG,p-markEarned(p,cr.mark),'essay');
+    }));
+  });
+  const rows=Object.values(map).sort((a,b)=>b.lostPoints-a.lostPoints);
+  const tot=rows.reduce((s,r)=>s+r.lostPoints,0);
+  rows.forEach(r=>{r.share=tot>0?r.lostPoints/tot:0;});
+  rows.skippedLegacyEssays=skippedLegacyEssays;
+  rows.untaggedLostPoints=untagged;
+  rows.totalLostPoints=tot;
+  return rows;
 }
 
 function band(rd){if(rd==null)return {label:'N/A',cls:'gray'};if(rd>=80)return {label:'상',cls:'green'};if(rd>=65)return {label:'중상',cls:'blue'};if(rd>=50)return {label:'중',cls:'amber'};return {label:'중하',cls:'red'};}
@@ -209,4 +328,6 @@ function admitBand(rd,u){if(rd==null)return {label:'-',cls:'gray',delta:0};
 export { ewma, computeReadiness, weightedRecent3, shortfallContribution, hwAccuracyAvg, hwTimeAvg,
          heatFromRecords, band, admitBand,
          sessionPercentRows, cohortSessionStats, standardizeWeekly,
-         cellRateSince, judgePrescription, essayTotals, essayRangeFor, PRESCRIPTION_DELTA };
+         cellRateSince, judgePrescription, essayTotals, essayRangeFor, PRESCRIPTION_DELTA,
+         hasEnoughSample, SAMPLE_GATE, pointShareFromRecords,
+         scoreTags, errorAxisFromRecords, UNCLASSIFIED_TAG };

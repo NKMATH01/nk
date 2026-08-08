@@ -9,6 +9,8 @@ import {
   hwAccuracyAvg, hwTimeAvg, band, admitBand,
   sessionPercentRows, cohortSessionStats, standardizeWeekly,
   cellRateSince, judgePrescription, essayTotals, essayRangeFor,
+  heatFromRecords, hasEnoughSample, SAMPLE_GATE, pointShareFromRecords,
+  scoreTags, errorAxisFromRecords,
 } from './calc.js';
 
 let passed = 0;
@@ -333,6 +335,211 @@ t('essayRangeFor 는 신·구 형식이 섞여 있어도 함께 집계한다', (
   const r = essayRangeFor(mixed, '국민대');
   assert.equal(r.n, 3);
   near(r.min, 0); near(r.max, 75); near(r.avg, 125 / 3);
+});
+
+console.log('표본 게이트 — 문항 3개 · 배점 6점 · 회차 2개');
+t('세 조건을 모두 채우면 통과', () => {
+  assert.equal(hasEnoughSample({ n: 3, points: 6, sessions: 2 }), true);
+});
+t('문항 수 경계: 2개는 미달, 3개는 통과', () => {
+  assert.equal(hasEnoughSample({ n: 2, points: 20, sessions: 3 }), false);
+  assert.equal(hasEnoughSample({ n: 3, points: 20, sessions: 3 }), true);
+});
+t('누적 배점 경계: 5점은 미달, 6점은 통과', () => {
+  // 1점짜리 문항 5개를 여러 회차에 흩어도 배점이 얇으면 정답률이 요동친다
+  assert.equal(hasEnoughSample({ n: 5, points: 5, sessions: 3 }), false);
+  assert.equal(hasEnoughSample({ n: 5, points: 6, sessions: 3 }), true);
+});
+t('회차 경계: 한 회차에 몰린 표본은 미달(그 회차 난이도의 함수다)', () => {
+  assert.equal(hasEnoughSample({ n: 5, points: 20, sessions: 1 }), false);
+  assert.equal(hasEnoughSample({ n: 5, points: 20, sessions: 2 }), true);
+});
+t('빈 셀·결측 필드는 미달', () => {
+  assert.equal(hasEnoughSample(null), false);
+  assert.equal(hasEnoughSample({ rate: 0 }), false);           // 구 형태(n/points/sessions 없음)
+  assert.equal(hasEnoughSample({ n: 3, points: 6 }), false);   // sessions 없음
+});
+t('SAMPLE_GATE 상수와 판정이 일치한다(화면 문구가 같은 값을 쓴다)', () => {
+  assert.deepEqual(SAMPLE_GATE, { n: 3, points: 6, sessions: 2 });
+});
+
+console.log('heatFromRecords — 게이트용 필드(points·sessions)');
+t('셀에 누적 배점과 관측 회차 수가 함께 담긴다', () => {
+  const cell = heatFromRecords([
+    { week: 1, unit: '미분', cognition: '활용', points: 4, earned: 2 },
+    { week: 1, unit: '미분', cognition: '활용', points: 4, earned: 4 },
+    { week: 2, unit: '미분', cognition: '활용', points: 4, earned: 0 },
+  ])['미분']['활용'];
+  assert.equal(cell.n, 3);
+  near(cell.points, 12);
+  assert.equal(cell.sessions, 2);
+});
+t('기존 반환 형태(rate·n)는 그대로다 — 게이트는 값을 바꾸지 않는다', () => {
+  const recs = [{ week: 1, unit: '수열', cognition: '개념', points: 10, earned: 5 }];
+  const cell = heatFromRecords(recs)['수열']['개념'];
+  near(cell.rate, 50);
+  assert.equal(cell.n, 1);
+  // 표본 미달이어도 rate 자체는 계산된다(표시만 회색이 된다)
+  assert.equal(hasEnoughSample(cell), false);
+});
+t('데이터가 없는 셀은 rate=null · sessions=0', () => {
+  const cell = heatFromRecords([])['적분']['그래프'];
+  assert.equal(cell.rate, null);
+  assert.equal(cell.sessions, 0);
+  near(cell.points, 0);
+});
+
+console.log('pointShareFromRecords — rate 와 같은 시간창(최근 3회)');
+t('창 밖의 오래된 배점은 비중에서 빠진다', () => {
+  const recs = [
+    { week: 1, unit: '수열', cognition: '개념', points: 90, earned: 0 },   // 창 밖
+    { week: 2, unit: '미분', cognition: '활용', points: 10, earned: 0 },
+    { week: 3, unit: '미분', cognition: '활용', points: 10, earned: 0 },
+    { week: 4, unit: '적분', cognition: '계산', points: 20, earned: 0 },
+  ];
+  const s = pointShareFromRecords(recs, 3);
+  assert.equal(s['수열|개념'], undefined);   // 최근 3회(2·3·4주)에 없다
+  near(s['미분|활용'], 20 / 40);
+  near(s['적분|계산'], 20 / 40);
+});
+t('전 기간으로 넓히면 오래된 셀이 다시 들어온다(시간창이 실제로 작동)', () => {
+  const recs = [
+    { week: 1, unit: '수열', cognition: '개념', points: 90, earned: 0 },
+    { week: 2, unit: '미분', cognition: '활용', points: 10, earned: 0 },
+  ];
+  near(pointShareFromRecords(recs, 99)['수열|개념'], 90 / 100);
+});
+t('비중의 합은 1', () => {
+  const s = pointShareFromRecords([
+    { week: 1, unit: '미분', cognition: '활용', points: 7, earned: 0 },
+    { week: 1, unit: '적분', cognition: '계산', points: 3, earned: 0 },
+  ]);
+  near(Object.values(s).reduce((a, b) => a + b, 0), 1);
+});
+t('빈 입력·배점 0 이면 빈 객체', () => {
+  assert.deepEqual(pointShareFromRecords([]), {});
+  assert.deepEqual(pointShareFromRecords([{ week: 1, unit: '미분', cognition: '활용', points: 0 }]), {});
+});
+
+console.log('scoreTags — 배열(0018) 우선 · 단일 컬럼 폴백');
+t('배열이 있으면 배열을 쓴다', () => {
+  assert.deepEqual(scoreTags({ wrong_reason_tags: ['조건 해석', '계산 실수'], wrong_reason: '조건 해석' }),
+    ['조건 해석', '계산 실수']);
+});
+t('★ 배열이 없는 과거 기록은 단일 원인으로 그대로 읽힌다', () => {
+  assert.deepEqual(scoreTags({ wrong_reason: '계산 실수' }), ['계산 실수']);
+  assert.deepEqual(scoreTags({ wrong_reason_tags: null, wrong_reason: '계산 실수' }), ['계산 실수']);
+  assert.deepEqual(scoreTags({ wrong_reason_tags: [], wrong_reason: '계산 실수' }), ['계산 실수']);
+});
+t('중복과 빈 값을 걸러낸다', () => {
+  assert.deepEqual(scoreTags({ wrong_reason_tags: ['조건 해석', '조건 해석', '', null] }), ['조건 해석']);
+});
+t('둘 다 없으면 빈 배열', () => {
+  assert.deepEqual(scoreTags(null), []);
+  assert.deepEqual(scoreTags({}), []);
+  assert.deepEqual(scoreTags({ wrong_reason: null }), []);
+});
+
+console.log('errorAxisFromRecords — 오류유형 축(흘린 점수 단위)');
+t('빈 입력은 빈 배열', () => {
+  const r = errorAxisFromRecords([], [], {});
+  assert.equal(r.length, 0);
+  assert.equal(r.totalLostPoints, 0);
+  assert.equal(r.skippedLegacyEssays, 0);
+  assert.deepEqual(errorAxisFromRecords(null, null).length, 0);
+});
+t('주간테스트: 태그가 여러 개면 실점을 균등 분배한다', () => {
+  // 10점 문항에서 4점을 잃고 태그 2개 → 각 2점
+  const r = errorAxisFromRecords(
+    [{ unit: '미분', cognition: '활용', points: 10, earned: 6, wrong_reason_tags: ['조건 해석', '계산 실수'] }], [], {});
+  assert.equal(r.length, 2);
+  near(r[0].lostPoints, 2); near(r[1].lostPoints, 2);
+  near(r[0].share, 0.5);
+  near(r.totalLostPoints, 4);
+  assert.deepEqual(r.map(x => x.sources.test), [2, 2]);
+});
+t('주간테스트: 단일 태그(과거 기록)는 실점 전액을 가져간다', () => {
+  const r = errorAxisFromRecords(
+    [{ unit: '미분', cognition: '활용', points: 10, earned: 6, wrong_reason: '조건 해석' }], [], {});
+  assert.equal(r[0].tag, '조건 해석');
+  near(r[0].lostPoints, 4);
+});
+t('태그가 없는 실점은 미분류로 지어내지 않고 따로 센다', () => {
+  const r = errorAxisFromRecords([{ unit: '미분', cognition: '활용', points: 10, earned: 6 }], [], {});
+  assert.equal(r.length, 0);
+  near(r.untaggedLostPoints, 4);
+});
+t('만점 문항은 집계에 들어가지 않는다', () => {
+  const r = errorAxisFromRecords(
+    [{ unit: '미분', cognition: '활용', points: 10, earned: 10, wrong_reason: '조건 해석' }], [], {});
+  assert.equal(r.length, 0);
+});
+t('첨삭: RUBRIC 기본 라벨이 오류유형으로 매핑된다(백필 없이 즉시 편입)', () => {
+  const r = errorAxisFromRecords([], [{
+    week_date: '2026-07-01',
+    items: [{ no: 1, criteria: [
+      { label: '조건 해석', points: 8, mark: 'X' },   // 8점 손실 → '조건 해석'
+      { label: '풀이 과정', points: 12, mark: 'P' },  // 6점 손실 → '풀이 근거 누락'
+      { label: '최종 답안', points: 10, mark: 'X' },  // 10점 손실 → '답안 형식'
+    ] }],
+  }], {});
+  const by = Object.fromEntries(r.map(x => [x.tag, x.lostPoints]));
+  near(by['조건 해석'], 8);
+  near(by['풀이 근거 누락'], 6);
+  near(by['답안 형식'], 10);
+  assert.equal(r[0].tag, '답안 형식');            // 손실 내림차순
+  assert.equal(r[0].sources.test, 0);
+  near(r[0].sources.essay, 10);
+});
+t('첨삭: O 는 손실이 없고, criteria.tag 가 있으면 라벨 매핑보다 우선한다', () => {
+  const r = errorAxisFromRecords([], [{
+    items: [{ no: 1, criteria: [
+      { label: '조건 해석', points: 8, mark: 'O' },
+      { label: '조건 해석', points: 8, mark: 'X', tag: '개념 누락' },
+    ] }],
+  }], {});
+  assert.equal(r.length, 1);
+  assert.equal(r[0].tag, '개념 누락');
+  near(r[0].lostPoints, 8);
+});
+t('첨삭: 매핑에 없는 라벨은 미분류로 모인다', () => {
+  const r = errorAxisFromRecords([], [{ items: [{ no: 1, criteria: [{ label: '서술 구조', points: 6, mark: 'X' }] }] }], {});
+  assert.equal(r[0].tag, '미분류');
+});
+t('★ 구형 첨삭(items 없음)은 집계에서 빠지고 건수만 남는다', () => {
+  const r = errorAxisFromRecords([], [
+    { cond_earned: 4, cond_max: 10, proc_earned: 5, proc_max: 20, ans_earned: 0, ans_max: 10 },  // 구형
+    { items: null, total_max: null },                                                            // 구형
+    { items: [{ no: 1, criteria: [{ label: '조건 해석', points: 8, mark: 'X' }] }] },             // 신형
+  ], {});
+  assert.equal(r.length, 1);
+  near(r[0].lostPoints, 8);
+  assert.equal(r.skippedLegacyEssays, 2);
+});
+t('주간테스트와 첨삭이 같은 태그로 합쳐지고 sources 로 나뉜다', () => {
+  const r = errorAxisFromRecords(
+    [{ unit: '미분', cognition: '활용', points: 10, earned: 4, wrong_reason: '조건 해석' }],
+    [{ items: [{ no: 1, criteria: [{ label: '조건 해석', points: 8, mark: 'X' }] }] }], {});
+  assert.equal(r.length, 1);
+  near(r[0].lostPoints, 14);
+  near(r[0].sources.test, 6);
+  near(r[0].sources.essay, 8);
+  assert.equal(r[0].n, 2);
+  near(r[0].share, 1);
+});
+t('sinceDate 는 주간테스트와 첨삭 양쪽을 자른다', () => {
+  const recs = [
+    { unit: '미분', cognition: '활용', points: 10, earned: 0, date: '2026-06-01', wrong_reason: '계산 실수' },
+    { unit: '미분', cognition: '활용', points: 10, earned: 4, date: '2026-07-10', wrong_reason: '조건 해석' },
+  ];
+  const essays = [
+    { week_date: '2026-06-02', items: [{ no: 1, criteria: [{ label: '최종 답안', points: 10, mark: 'X' }] }] },
+    { week_date: '2026-07-11', items: [{ no: 1, criteria: [{ label: '조건 해석', points: 8, mark: 'X' }] }] },
+  ];
+  const r = errorAxisFromRecords(recs, essays, { sinceDate: '2026-07-01' });
+  assert.equal(r.length, 1);
+  assert.equal(r[0].tag, '조건 해석');
+  near(r[0].lostPoints, 14);
 });
 
 console.log('\n' + passed + ' passed' + (process.exitCode ? ' / 일부 실패' : ' / 전부 통과'));

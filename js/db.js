@@ -326,7 +326,8 @@ async function studentBundle(sid,ctx){
   // 문항 레코드(단원/사고/배점/득점) — date 는 처방 재측정 구간을 자르는 데 쓴다.
   const questionRecords=scores.map(sc=>{const q=qById[sc.question_id];if(!q)return null;
     // question_id 는 학생 제출물(submissions)과 이어 붙이는 열쇠다(js/views/essays.js).
-    return {question_id:sc.question_id,unit:q.unit,cognition:q.cognition,points:Number(q.points)||0,earned:Number(sc.earned)||0,week:sessById[q.session_id]?.week_no,date:sessById[q.session_id]?.exam_date,session_id:q.session_id,wrong_reason:sc.wrong_reason,no:q.no,reason_note:sc.reason_note,photo_url:sc.photo_url};
+    // wrong_reason_tags(0018)는 그대로 실어 보낸다 — 읽는 쪽은 calc.js scoreTags() 로 폴백한다.
+    return {question_id:sc.question_id,unit:q.unit,cognition:q.cognition,points:Number(q.points)||0,earned:Number(sc.earned)||0,week:sessById[q.session_id]?.week_no,date:sessById[q.session_id]?.exam_date,session_id:q.session_id,wrong_reason:sc.wrong_reason,wrong_reason_tags:sc.wrong_reason_tags||null,no:q.no,reason_note:sc.reason_note,photo_url:sc.photo_url};
   }).filter(Boolean);
   // 신형(items)·구형(3분할) 첨삭을 같은 규칙으로 접는다 — 준비도 15% 항목의 입력값.
   const essayInputs=essays.map(e=>essayTotals(e));

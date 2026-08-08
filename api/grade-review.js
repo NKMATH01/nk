@@ -91,11 +91,17 @@ module.exports = async function handler(req, res){
          tags_only 모드는 suggested_score 가 아예 오지 않는다. 점수를 조건으로 걸면
          강사가 [반영]을 눌러도 태그까지 함께 버려져 아무것도 저장되지 않았다.
          점수가 null 이면 payload 에서 earned 를 빼서 기존 점수를 null 로 덮지 않고
-         wrong_reason 만 기록한다(PostgREST 는 payload 에 있는 컬럼만 갱신한다). */
+         wrong_reason 만 기록한다(PostgREST 는 payload 에 있는 컬럼만 갱신한다).
+
+       ★ 태그는 전부 남긴다(0018).
+         wrong_reason 은 주 원인 하나만 담는 컬럼이라 AI 가 여러 개를 짚어도
+         첫 번째만 남고 나머지가 버려졌다. wrong_reason_tags 에 전부 넣고
+         wrong_reason 은 지금처럼 finalTags[0] 로 계속 write-through 한다. */
     const writeRow = {
       question_id: sub.question_id,
       student_id: sub.student_id,
       wrong_reason: finalTags.length ? finalTags[0] : null,
+      wrong_reason_tags: finalTags.length ? [...new Set(finalTags)] : null,
     };
     if(finalScore != null) writeRow.earned = finalScore;
     let wroteScore = false, wroteTags = false;
