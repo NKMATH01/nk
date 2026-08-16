@@ -75,7 +75,7 @@ async function loadSubmission(id){
 async function loadQuestionContext(questionId){
   const rows = await L.sbRest(
     "questions?id=eq." + L.eqParam(questionId) +
-    "&select=id,no,unit,cognition,points,source,problem_id,deduction_items&limit=1");
+    "&select=id,no,unit,cognition,points,source,problem_id,deduction_items,rubric&limit=1");
   const q = Array.isArray(rows) && rows.length ? rows[0] : null;
   if(!q) return null;
   if(q.problem_id){
@@ -148,10 +148,13 @@ async function runGrade(sub){
     if(pr.body_latex) lines.push("문제: " + pr.body_latex);
     if(pr.answer_latex) lines.push("정답: " + pr.answer_latex);
     if(pr.solution_latex) lines.push("모범 풀이: " + pr.solution_latex);
-    if(Array.isArray(pr.rubric) && pr.rubric.length){
-      lines.push("채점 기준:");
-      pr.rubric.forEach(r => lines.push(" - " + r.criterion + " (" + r.points + "점)" + (r.tag ? " [" + r.tag + "]" : "")));
-    }
+  }
+  if(q && Array.isArray(q.rubric) && q.rubric.length){
+    lines.push("채점 기준:");
+    q.rubric.forEach(r => lines.push(" - " + r.criterion + " (" + r.points + "점)" + (r.tag ? " [" + r.tag + "]" : "")));
+  }else if(pr && Array.isArray(pr.rubric) && pr.rubric.length){
+    lines.push("채점 기준:");
+    pr.rubric.forEach(r => lines.push(" - " + r.criterion + " (" + r.points + "점)" + (r.tag ? " [" + r.tag + "]" : "")));
   }else if(q && Array.isArray(q.deduction_items) && q.deduction_items.length){
     lines.push("감점 항목:");
     q.deduction_items.forEach(d => lines.push(" - " + d.label + " (-" + d.points + ")" + (d.tag ? " [" + d.tag + "]" : "")));

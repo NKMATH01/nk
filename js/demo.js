@@ -72,8 +72,22 @@ function buildDemoStore(){
       const points=[5,8,10,12][Math.floor(rnd()*4)];
       totPts+=points;
       const qq={id:uuid(),session_id:sess.id,no:q+1,unit,cognition:cog,points,source:'수특 '+unit+' '+(q+1)};
-      // 감점 항목 샘플(앞 3문항만) — 채점 그리드 체크박스 데모용
-      if(q<3){
+      // 앞 2문항은 채점기준 충족 경로, 3번째는 레거시 감점 항목 경로 데모.
+      if(q===0){
+        const a=Math.max(1,Math.floor(points*0.3)),b=Math.max(1,Math.floor(points*0.3));
+        qq.rubric=[
+          {criterion:'조건을 식으로 옮김',points:a,tag:'조건 해석'},
+          {criterion:'풀이 근거를 빠짐없이 제시',points:b,tag:'풀이 근거 누락'},
+          {criterion:'정답을 정확히 도출',points:points-a-b,tag:null},
+        ];
+      }else if(q===1){
+        const a=Math.max(1,Math.floor(points*0.4));
+        qq.rubric=[
+          {criterion:'계산 과정을 정확히 수행',points:a,tag:'계산 실수'},
+          {criterion:'최종 결론을 완성',points:points-a,tag:null},
+        ];
+      }else if(q===2){
+        // 레거시 감점 항목 경로 데모
         qq.deduction_items=[
           {label:'조건 누락',points:Math.max(1,Math.round(points*0.2)),tag:'조건 해석'},
           {label:'풀이 근거 미기재',points:Math.max(1,Math.round(points*0.3)),tag:'풀이 근거 누락'},

@@ -192,7 +192,7 @@ async function renderScoreGrid(body,c){
   const head=`<thead><tr><th class="corner">학생 \\ 문항</th>${questions.map(q=>`<th><span class="qno">${q.no}</span><span class="qmeta">${esc(q.unit.slice(0,4))}·${esc(q.cognition)}</span><span class="qmeta">${q.points}점</span></th>`).join('')}<th class="corner right">합계</th></tr></thead>`;
   const rowsHTML=students.map((st,ri)=>`<tr><th class="stu">${esc(st.name)}</th>${questions.map((q,ci)=>{
     const sc=scMap[q.id+'|'+st.id];const val=sc?sc.earned:'';const tag=sc&&sc.wrong_reason?sc.wrong_reason:'';const note=sc&&sc.reason_note?sc.reason_note:'';const photo=sc&&sc.photo_url?sc.photo_url:'';
-    const ded=sc&&sc.deduction_checks?JSON.stringify(sc.deduction_checks):'';   // 감점 체크 상태(셀 재편집 시 복원용)
+    const ded=sc&&sc.deduction_checks?JSON.stringify(sc.deduction_checks):'';   // 채점기준/감점 체크 상태(셀 재편집 시 복원용)
     return `<td class="scell" data-r="${ri}" data-c="${ci}" data-q="${esc(q.id)}" data-s="${esc(st.id)}" data-max="${q.points}" data-tag="${esc(tag)}" data-note="${esc(note)}" data-photo="${esc(photo)}" data-ded="${esc(ded)}">
       ${tag||note||photo?'<span class="tagdot" title="'+esc(tag||'메모/사진')+'"></span>':''}
       <input type="number" min="0" max="${q.points}" value="${val}" data-r="${ri}" data-c="${ci}">
@@ -237,7 +237,7 @@ async function renderScoreGrid(body,c){
   const qById={};questions.forEach(q=>qById[q.id]=q);
   grid.querySelectorAll('.tagbtn').forEach(btn=>btn.addEventListener('click',()=>{
     const td=btn.closest('td.scell');const q=qById[td.dataset.q];
-    openTagMenu(td,q&&q.deduction_items);}));
+    openTagMenu(td,q);}));
   recompute();
   $('gridSave').addEventListener('click',async()=>{
     const m=$('gridMsg');m.className='msg';m.textContent='';
@@ -312,14 +312,27 @@ async function openBankPicker(onPick){
   draw();
 }
 
-function openTagMenu(td,dedItems){
+function openTagMenu(td,q){
   const curTag=td.dataset.tag||'',curNote=td.dataset.note||'',curPhoto=td.dataset.photo||'';
   const maxPts=Number(td.dataset.max)||0;
-  const items=Array.isArray(dedItems)?dedItems.filter(d=>d&&d.label&&Number(d.points)>0):[];
+  const rubricMode=!!(q&&Array.isArray(q.rubric)&&q.rubric.length);
+  const rubricItems=rubricMode?q.rubric.filter(r=>r&&r.criterion&&Number(r.points)>0):[];
+  const deductionItems=!rubricMode&&q&&Array.isArray(q.deduction_items)
+    ?q.deduction_items.filter(d=>d&&d.label&&Number(d.points)>0):[];
+  const items=rubricMode?rubricItems:deductionItems;
   let selTag=curTag,removePhoto=false;
   const panel=document.createElement('div');
   panel.style.cssText='position:fixed;z-index:100;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:12px;width:280px;max-height:80vh;overflow:auto';
-  const dedHTML=items.length?`
+  const rubricHTML=rubricMode&&items.length?`
+    <div style="font-size:12px;font-weight:700;margin-bottom:6px">채점기준 <span class="muted" style="font-weight:400">미충족 기준의 체크를 해제하면 점수가 자동 계산됩니다.</span></div>
+    <div class="tm_rubric" style="margin-bottom:6px">
+      ${items.map((r,i)=>`<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;padding:3px 0;cursor:pointer">
+        <input type="checkbox" class="tm_rubchk" data-i="${i}" data-pts="${esc(r.points)}" data-tag="${esc(r.tag||'')}" checked>
+        <span style="flex:1">${esc(r.criterion)}</span>
+        <span class="chip blue" style="font-size:10.5px">+${esc(r.points)}</span></label>`).join('')}
+    </div>
+    <div class="tm_rubsum muted" style="font-size:11.5px;margin-bottom:10px"></div>`:'';
+  const dedHTML=!rubricMode&&items.length?`
     <div style="font-size:12px;font-weight:700;margin-bottom:6px">감점 항목 <span class="muted" style="font-weight:400">체크하면 점수가 자동 계산됩니다</span></div>
     <div class="tm_ded" style="margin-bottom:6px">
       ${items.map((d,i)=>`<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;padding:3px 0;cursor:pointer">
@@ -328,7 +341,7 @@ function openTagMenu(td,dedItems){
         <span class="chip red" style="font-size:10.5px">-${esc(d.points)}</span></label>`).join('')}
     </div>
     <div class="tm_dedsum muted" style="font-size:11.5px;margin-bottom:10px"></div>`:'';
-  panel.innerHTML=dedHTML+`
+  panel.innerHTML=rubricHTML+dedHTML+`
     <div style="font-size:12px;font-weight:700;margin-bottom:6px">오답 원인</div>
     <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">
       ${['(없음)',...WRONG_REASONS].map(r=>{const v=(r==='(없음)'?'':r);return `<button type="button" class="btn line sm tm_tag" data-r="${esc(v)}" style="${v===selTag?'border-color:var(--purple);color:var(--purple)':''}">${esc(r)}</button>`;}).join('')}
@@ -373,28 +386,52 @@ function openTagMenu(td,dedItems){
       if(top&&top.dataset.tag)markTag(top.dataset.tag);
     }
   }
-  panel.querySelectorAll('.tm_dedchk').forEach(c=>c.addEventListener('change',()=>recalcDeduction()));
+  /* 채점기준 체크 → 득점 = 충족 기준 합계 + 기준에 배정되지 않은 기본 점수.
+     가장 큰 미충족 기준의 태그를 오답원인으로 자동 제안한다(수동 변경 가능).
+     summaryOnly 는 저장 상태 복원 중 기존 득점·오답원인을 보존한다. */
+  function recalcRubric(summaryOnly){
+    const chks=[...panel.querySelectorAll('.tm_rubchk')];
+    const met=chks.filter(c=>c.checked),unmet=chks.filter(c=>!c.checked);
+    const rubricSum=items.reduce((s,r)=>s+(Number(r.points)||0),0);
+    const remainder=Math.max(0,maxPts-rubricSum);
+    const earned=Math.min(maxPts,met.reduce((s,c)=>s+(Number(c.dataset.pts)||0),0)+remainder);
+    if(!summaryOnly){
+      const inp=td.querySelector('input');
+      inp.value=String(earned);
+      inp.dispatchEvent(new Event('input',{bubbles:true}));   // 행 합계·정답률 갱신
+    }
+    const sumEl=panel.querySelector('.tm_rubsum');
+    if(sumEl)sumEl.textContent=unmet.length?('미충족 '+unmet.length+'개 → 득점 '+earned+' / '+maxPts):'전체 충족 → 만점 처리';
+    if(!summaryOnly&&unmet.length){
+      const top=unmet.slice().sort((a,b)=>(Number(b.dataset.pts)||0)-(Number(a.dataset.pts)||0))[0];
+      if(top&&top.dataset.tag)markTag(top.dataset.tag);
+    }
+  }
+  const recalcChecks=summaryOnly=>rubricMode?recalcRubric(summaryOnly):recalcDeduction(summaryOnly);
+  panel.querySelectorAll('.tm_dedchk,.tm_rubchk').forEach(c=>c.addEventListener('change',()=>recalcChecks(false)));
+  if(rubricMode)recalcRubric(true);
 
-  /* 저장된 감점 체크 상태 복원. label·points 가 모두 같은 **아직 짝짓지 않은**
-     첫 체크박스와 차례로 이어 붙인다(같은 라벨이 둘 이상일 때 중복 체크 방지).
-     매칭 실패한 항목은 조용히 무시한다 — 감점 항목이 나중에 편집된 경우다. */
+  /* 저장된 체크 상태 복원. 감점 모드는 체크된 항목, rubric 모드는 미충족 기준을
+     deduction_checks 에 저장한다. label·points 가 같은 **아직 짝짓지 않은** 첫
+     체크박스를 사용하며, 편집으로 매칭이 사라진 항목은 조용히 무시한다. */
   (function restoreDedChecks(){
     if(!items.length||!td.dataset.ded)return;
     let saved=null;
     try{saved=JSON.parse(td.dataset.ded);}catch(e){return;}
     if(!Array.isArray(saved)||!saved.length)return;
-    const chks=[...panel.querySelectorAll('.tm_dedchk')];
+    const chks=[...panel.querySelectorAll(rubricMode?'.tm_rubchk':'.tm_dedchk')];
     saved.forEach(s=>{
       if(!s)return;
       const hit=chks.find(c=>{const d=items[Number(c.dataset.i)];
-        return !c.checked&&d&&d.label===s.label&&Number(d.points)===Number(s.points);});
-      if(hit)hit.checked=true;
+        const label=rubricMode?d&&d.criterion:d&&d.label;
+        return c.checked===rubricMode&&d&&label===s.label&&Number(d.points)===Number(s.points);});
+      if(hit)hit.checked=!rubricMode;
     });
-    recalcDeduction(true);
+    recalcChecks(true);
   })();
 
   // AI 분석 섹션(관리자 전용). 키 미설정이면 버튼을 비활성화하고 이유를 보여준다.
-  initAiSection(panel,td,markTag);
+  initAiSection(panel,td,markTag,rubricMode);
   panel.querySelector('.tm_rmphoto')?.addEventListener('click',()=>{removePhoto=true;panel.querySelector('.tm_photo').innerHTML='<span class="muted" style="font-size:12px">사진을 삭제합니다(저장 시 반영).</span>';});
   panel.querySelector('.tm_close').addEventListener('click',close);
   panel.querySelector('.tm_save').addEventListener('click',async()=>{
@@ -402,17 +439,20 @@ function openTagMenu(td,dedItems){
     const inp=td.querySelector('input');const v=inp.value;
     if(v===''||isNaN(Number(v))){m.className='tm_msg msg err';m.textContent='점수를 먼저 입력하세요.';return;}
     const earned=Number(v);const note=panel.querySelector('.tm_note').value.trim()||null;
-    /* 체크된 감점 항목을 그대로 남긴다(다음에 셀을 열 때 복원). 체크가 없으면 null.
-       tag 를 함께 남긴다(0018) — 지금까지는 label·points 만 남기고 버렸다.
-       **복원 매칭 기준은 label+points 그대로다**(restoreDedChecks 참고).
-       tag 를 매칭에 넣으면 tag 가 없는 기존 기록이 복원되지 않는다. */
-    const dedChks=[...panel.querySelectorAll('.tm_dedchk:checked')];
-    const dedSaved=dedChks.length?dedChks.map(c=>({label:items[Number(c.dataset.i)].label,points:Number(c.dataset.pts)||0,tag:c.dataset.tag||null})):null;
-    /* 체크된 감점들의 태그 전부를 배열로 남긴다(0018). 강사는 이미 여러 개를
-       체크하고 있는데 지금까지는 가장 큰 것 하나만 저장됐다 — **추가 작업 0**.
-       수동 선택한 주 원인(selTag)도 함께 넣는다. 강사가 제안을 덮어썼을 때
-       그 판단이 배열에서 빠지면 오류유형 축에서 통째로 사라진다. */
-    const tagSet=[...new Set([...dedChks.map(c=>c.dataset.tag||''),selTag||''].filter(Boolean))];
+    /* deduction_checks 는 감점 모드에서는 체크된 감점 항목, rubric 모드에서는
+       **미충족 기준**을 남긴다. rubric 에서도 DB 컬럼의 기존 명칭과 과거 기록의
+       label+points 복원 규약을 지키려고 criterion 을 label 로 저장한다.
+       tag 는 기록하되 복원 매칭에는 넣지 않아 tag 없는 과거 기록도 복원한다. */
+    const checkedItems=rubricMode
+      ?[...panel.querySelectorAll('.tm_rubchk:not(:checked)')]
+      :[...panel.querySelectorAll('.tm_dedchk:checked')];
+    const dedSaved=checkedItems.length?checkedItems.map(c=>({
+      label:rubricMode?items[Number(c.dataset.i)].criterion:items[Number(c.dataset.i)].label,
+      points:Number(c.dataset.pts)||0,tag:c.dataset.tag||null,
+    })):null;
+    /* 미충족 기준(또는 체크된 감점)의 태그 전부와 수동 선택한 주 원인(selTag)을
+       중복 없이 저장한다. 강사가 제안을 덮어쓴 판단도 오류유형 축에 남는다. */
+    const tagSet=[...new Set([...checkedItems.map(c=>c.dataset.tag||''),selTag||''].filter(Boolean))];
     const file=panel.querySelector('.tm_file').files[0];
     let photoUrl=removePhoto?null:(curPhoto||null),demoPhoto=false;
     if(file){
@@ -443,14 +483,14 @@ function openTagMenu(td,dedItems){
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   감점 패널의 AI 분석 섹션
+   채점 패널의 AI 분석 섹션
 
    원칙: AI 값은 어떤 경우에도 자동 반영되지 않는다.
      · 제안은 회색 점선 상자로 감싸 강사 입력과 시각적으로 구분한다.
      · [반영] 버튼을 눌러야 grade-review 를 거쳐 scores 에 기록된다.
      · tags_only 모드에서는 점수 제안 자체가 오지 않는다(앵커링 방지).
    ═══════════════════════════════════════════════════════════════════ */
-async function initAiSection(panel,td,markTag){
+async function initAiSection(panel,td,markTag,rubricMode){
   const box=panel.querySelector('.tm_ai');
   if(!box)return;
   const set=html=>{const b=panel.querySelector('.tm_ai');if(b)b.innerHTML=html;};
@@ -492,7 +532,7 @@ async function initAiSection(panel,td,markTag){
   set(modeChip+' <span class="muted" style="font-size:11px">제출 '+esc(fmtDate(sub.submitted_at))+'</span>'
     +photos
     +'<div style="margin-top:6px"><button type="button" class="btn line sm ai_run" data-stage="transcribe">1. 답안 전사</button> '
-    +'<button type="button" class="btn line sm ai_run" data-stage="grade">2. 감점 분석</button></div>'
+    +'<button type="button" class="btn line sm ai_run" data-stage="grade">2. '+(rubricMode?'채점':'감점')+' 분석</button></div>'
     +(sub.ocr_text?'<div class="muted" style="font-size:11.5px;margin-top:4px">전사 결과가 이미 있습니다(재실행 시 갱신).</div>':'')
     +'<div class="ai_out" style="margin-top:6px"></div>');
   hydrateSignedPhotos(panel);   // 답안 원본도 private 버킷이라 서명 URL 이 필요하다
