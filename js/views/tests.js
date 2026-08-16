@@ -1,4 +1,4 @@
-/* 주간테스트 — 회차 / 문항 정의 / 채점 그리드 / 감점 태그 */
+/* 주간테스트 — 회차 / 문항 정의 / 채점 그리드 / 채점기준 태그 */
 import { COGNITIONS, UNITS, WRONG_REASONS } from '../config.js';
 import { db, storagePathFromValue } from '../db.js';
 import { svg } from '../icons.js';
@@ -78,6 +78,9 @@ async function renderQuestionDef(body,c){
     </div>`;
   const tb=body.querySelector('#qdef tbody');
   function addRow(q){
+    const initialRubric=Array.isArray(q&&q.rubric)?q.rubric:
+      (q&&Array.isArray(q.deduction_items)?q.deduction_items:[])
+        .map(d=>({criterion:d.label,points:d.points,tag:d.tag}));
     const tr=document.createElement('tr');
     tr.innerHTML=`<td class="qnocell num"></td>
       <td><select class="q_unit field" style="width:100%;padding:6px 8px;border:1.5px solid var(--line);border-radius:7px">${UNITS.map(u=>`<option ${q&&q.unit===u?'selected':''}>${esc(u)}</option>`).join('')}</select></td>
@@ -85,56 +88,59 @@ async function renderQuestionDef(body,c){
       <td><input class="q_pts" type="number" min="0" value="${q?esc(q.points):0}" style="width:76px;padding:6px 8px;border:1.5px solid var(--line);border-radius:7px"></td>
       <td><input class="q_src" value="${q&&q.source?esc(q.source):''}" placeholder="예: 수특 미적분 6-12" style="width:100%;padding:6px 8px;border:1.5px solid var(--line);border-radius:7px"></td>
       <td><button class="btn danger icon q_del">${svg('trash','xs')}</button></td>`;
-    // 감점 항목 편집 행 — 채점 그리드에서 체크박스로 쓰인다
-    const dtr=document.createElement('tr');
-    dtr.className='ded-row';
-    dtr.innerHTML=`<td></td><td colspan="5" style="padding-top:0">
-      <details class="ded-wrap"${(q&&q.deduction_items&&q.deduction_items.length)?' open':''}>
-        <summary style="font-size:12px;cursor:pointer;color:var(--ink-2)">감점 항목 <span class="ded-count chip gray"></span></summary>
-        <div class="ded-list" style="margin-top:6px"></div>
-        <button type="button" class="btn line sm ded-add" style="margin-top:6px">${svg('plus','xs')}감점 항목 추가</button>
-        <div class="ded-msg muted" style="font-size:11.5px;margin-top:4px"></div>
+    // 채점기준 편집 행 — 채점 그리드에서 충족 여부 체크박스로 쓰인다
+    const rtr=document.createElement('tr');
+    rtr.className='rub-row';
+    rtr.innerHTML=`<td></td><td colspan="5" style="padding-top:0">
+      <details class="rub-wrap"${initialRubric.length?' open':''}>
+        <summary style="font-size:12px;cursor:pointer;color:var(--ink-2)">채점기준 <span class="rub-count chip gray"></span></summary>
+        <div class="rub-list" style="margin-top:6px"></div>
+        <button type="button" class="btn line sm rub-add" style="margin-top:6px">${svg('plus','xs')}기준 추가</button>
+        <div class="rub-msg muted" style="font-size:11.5px;margin-top:4px"></div>
       </details></td>`;
-    tr._ded=dtr;
+    tr._rub=rtr;
     tr.dataset.problemId=(q&&q.problem_id)?q.problem_id:'';   // 은행 연결(누적 실적 집계용)
-    tr.querySelector('.q_del').addEventListener('click',()=>{dtr.remove();tr.remove();renumber();});
-    tr.querySelector('.q_pts').addEventListener('input',()=>{updateSum();checkDed(tr);});
-    tb.appendChild(tr);tb.appendChild(dtr);
+    tr.querySelector('.q_del').addEventListener('click',()=>{rtr.remove();tr.remove();renumber();});
+    tr.querySelector('.q_pts').addEventListener('input',()=>{updateSum();checkRubric(tr);});
+    tb.appendChild(tr);tb.appendChild(rtr);
 
-    const list=dtr.querySelector('.ded-list');
-    const addDed=(d)=>{
+    const list=rtr.querySelector('.rub-list');
+    const addRubric=(r)=>{
       const row=document.createElement('div');
-      row.className='ded-item';
+      row.className='rub-item';
       row.style.cssText='display:flex;gap:6px;align-items:center;margin-bottom:4px';
-      row.innerHTML=`<input class="d_label" value="${d&&d.label?esc(d.label):''}" placeholder="감점 사유(예: 조건 누락)" style="flex:2;padding:5px 7px;border:1.5px solid var(--line);border-radius:7px;font-size:12px">
-        <input class="d_pts" type="number" min="0" step="0.5" value="${d&&d.points!=null?esc(d.points):1}" style="width:64px;padding:5px 7px;border:1.5px solid var(--line);border-radius:7px;font-size:12px">
-        <select class="d_tag" style="flex:1;padding:5px 7px;border:1.5px solid var(--line);border-radius:7px;font-size:12px">
-          <option value="">태그 없음</option>${WRONG_REASONS.map(r=>`<option ${d&&d.tag===r?'selected':''}>${esc(r)}</option>`).join('')}</select>
-        <button type="button" class="btn danger icon d_del">${svg('trash','xs')}</button>`;
-      row.querySelector('.d_del').addEventListener('click',()=>{row.remove();checkDed(tr);});
-      row.querySelector('.d_pts').addEventListener('input',()=>checkDed(tr));
-      list.appendChild(row);checkDed(tr);
+      row.innerHTML=`<input class="r_crit" value="${r&&r.criterion?esc(r.criterion):''}" placeholder="채점 기준(예: 조건 해석)" style="flex:2;padding:5px 7px;border:1.5px solid var(--line);border-radius:7px;font-size:12px">
+        <input class="r_pts" type="number" min="0" step="0.5" value="${r&&r.points!=null?esc(r.points):1}" style="width:64px;padding:5px 7px;border:1.5px solid var(--line);border-radius:7px;font-size:12px">
+        <select class="r_tag" style="flex:1;padding:5px 7px;border:1.5px solid var(--line);border-radius:7px;font-size:12px">
+          <option value="">태그 없음</option>${WRONG_REASONS.map(x=>`<option ${r&&r.tag===x?'selected':''}>${esc(x)}</option>`).join('')}</select>
+        <button type="button" class="btn danger icon r_del">${svg('trash','xs')}</button>`;
+      row.querySelector('.r_del').addEventListener('click',()=>{row.remove();checkRubric(tr);});
+      row.querySelector('.r_pts').addEventListener('input',()=>checkRubric(tr));
+      list.appendChild(row);checkRubric(tr);
     };
-    (q&&Array.isArray(q.deduction_items)?q.deduction_items:[]).forEach(addDed);
-    dtr.querySelector('.ded-add').addEventListener('click',()=>addDed(null));
-    checkDed(tr);
+    initialRubric.forEach(addRubric);
+    rtr.querySelector('.rub-add').addEventListener('click',()=>addRubric(null));
+    checkRubric(tr);
   }
-  /* 감점 합계가 배점을 넘으면 저장을 막는다(음수 점수 방지). */
-  function checkDed(tr){
-    const dtr=tr._ded;if(!dtr)return true;
+  /* 채점기준 합계가 배점을 넘으면 저장을 막고, 남는 배점은 기본 점수임을 알린다. */
+  function checkRubric(tr){
+    const rtr=tr._rub;if(!rtr)return true;
     const max=Number(tr.querySelector('.q_pts').value)||0;
-    const items=[...dtr.querySelectorAll('.ded-item')];
-    const sum=items.reduce((s,r)=>s+(Number(r.querySelector('.d_pts').value)||0),0);
-    const cnt=dtr.querySelector('.ded-count');
+    const items=[...rtr.querySelectorAll('.rub-item')];
+    const sum=items.reduce((s,r)=>s+(Number(r.querySelector('.r_pts').value)||0),0);
+    const cnt=rtr.querySelector('.rub-count');
     cnt.textContent=items.length?items.length+'개':'없음';
     const over=items.length&&sum>max;
-    cnt.className='chip '+(over?'red':(items.length?'blue':'gray'));
-    const msg=dtr.querySelector('.ded-msg');
-    msg.textContent=over?('감점 합계 '+sum+'점이 배점 '+max+'점을 초과합니다.'):(items.length?('감점 합계 '+sum+' / 배점 '+max):'');
-    msg.style.color=over?'var(--red)':'';
+    const under=items.length&&sum<max;
+    cnt.className='chip '+(over?'red':(under?'amber':(items.length?'blue':'gray')));
+    const msg=rtr.querySelector('.rub-msg');
+    msg.textContent=over?('기준 합계 '+sum+'점이 배점 '+max+'점을 초과합니다.'):
+      (under?('기준 합계 '+sum+' / 배점 '+max+' — 남는 '+(max-sum)+'점은 항상 부여되는 기본 점수로 처리됩니다.'):
+        (items.length?('기준 합계 '+sum+' / 배점 '+max):''));
+    msg.style.color=over?'var(--red)':(under?'var(--amber)':'');
     return !over;
   }
-  function qRows(){return [...tb.children].filter(tr=>!tr.classList.contains('ded-row'));}
+  function qRows(){return [...tb.children].filter(tr=>!tr.classList.contains('rub-row'));}
   function renumber(){qRows().forEach((tr,i)=>tr.querySelector('.qnocell').textContent=i+1);updateSum();}
   function updateSum(){let sum=0;tb.querySelectorAll('.q_pts').forEach(i=>sum+=Number(i.value)||0);
     const el=$('ptsum');el.textContent='배점 합계 '+sum+' / 총점 '+sess.total_score;
@@ -143,31 +149,31 @@ async function renderQuestionDef(body,c){
   renumber();
   $('qadd').addEventListener('click',()=>{addRow({unit:UNITS[0],cognition:COGNITIONS[0],points:0,source:null});renumber();});
   $('qbank').addEventListener('click',()=>openBankPicker(picked=>{
-    // 은행 문항 → 회차 문항. rubric 중 태그가 붙은 항목을 감점 항목 초기값으로 옮긴다.
+    // 은행 문항 → 회차 문항. 태그 유무와 관계없이 rubric 을 그대로 복사한다.
     picked.forEach(p=>addRow({
       unit:p.unit||UNITS[0],cognition:p.cognition||COGNITIONS[0],points:p.points!=null?p.points:0,
       source:p.source_citation||null,problem_id:p.id,
-      deduction_items:(Array.isArray(p.rubric)?p.rubric:[]).filter(r=>r&&r.tag&&Number(r.points)>0)
-        .map(r=>({label:r.criterion,points:Number(r.points),tag:r.tag})),
+      rubric:(Array.isArray(p.rubric)?p.rubric:[]).filter(r=>r&&r.criterion&&Number(r.points)>0)
+        .map(r=>({criterion:r.criterion,points:Number(r.points),tag:r.tag||null})),
     }));
     renumber();
   }));
   $('qsave').addEventListener('click',async()=>{
     const m=$('qmsg');m.className='msg';m.textContent='';
-    const rows=[];let bad=false,dedOver=false;
+    const rows=[];let bad=false,rubricOver=false;
     qRows().forEach((tr,i)=>{const pts=Number(tr.querySelector('.q_pts').value);if(isNaN(pts)||pts<0)bad=true;
-      if(!checkDed(tr))dedOver=true;
-      const items=[...(tr._ded?tr._ded.querySelectorAll('.ded-item'):[])].map(r=>({
-        label:r.querySelector('.d_label').value.trim(),
-        points:Number(r.querySelector('.d_pts').value)||0,
-        tag:r.querySelector('.d_tag').value||null,
-      })).filter(d=>d.label&&d.points>0);
+      if(!checkRubric(tr))rubricOver=true;
+      const items=[...(tr._rub?tr._rub.querySelectorAll('.rub-item'):[])].map(r=>({
+        criterion:r.querySelector('.r_crit').value.trim(),
+        points:Number(r.querySelector('.r_pts').value)||0,
+        tag:r.querySelector('.r_tag').value||null,
+      })).filter(x=>x.criterion&&x.points>0);
       rows.push({no:i+1,unit:tr.querySelector('.q_unit').value,cognition:tr.querySelector('.q_cog').value,points:pts,source:tr.querySelector('.q_src').value.trim()||null,
         problem_id:tr.dataset.problemId||null,
-        deduction_items:items.length?items:null});});
+        rubric:items.length?items:null});});
     if(!rows.length){m.className='msg err';m.textContent='문항이 없습니다.';return;}
     if(bad){m.className='msg err';m.textContent='배점을 확인하세요.';return;}
-    if(dedOver){m.className='msg err';m.textContent='감점 합계가 배점을 초과한 문항이 있습니다.';return;}
+    if(rubricOver){m.className='msg err';m.textContent='기준 합계가 배점을 초과한 문항이 있습니다.';return;}
     try{await db.saveQuestions(sess.id,rows);m.className='msg ok';m.textContent='저장되었습니다. 채점 그리드로 이동하세요.';}
     catch(e){m.className='msg err';m.textContent='실패: '+(e?.message||'오류');}
   });

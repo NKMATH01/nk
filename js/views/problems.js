@@ -359,7 +359,7 @@ function openEditor(c, p, ctx){
         ${(v.body_image_paths || []).map(path => `<span data-photo-path="${esc(path)}" data-photo-bucket="problem-images" data-photo-height="80" class="muted" style="font-size:11px">이미지 불러오는 중...</span>`).join('')}</div>
       <input type="file" id="pb_file" accept="image/*" style="font-size:12px"></div>
     <div class="divider"></div>
-    <div style="font-size:12px;font-weight:700;margin-bottom:6px">채점 기준(rubric) <span class="muted" style="font-weight:400">회차에 넣을 때 감점 항목으로 복사됩니다</span></div>
+    <div style="font-size:12px;font-weight:700;margin-bottom:6px">채점 기준(rubric) <span class="muted" style="font-weight:400">회차에 넣을 때 채점기준으로 복사됩니다</span></div>
     <div id="pb_rubric"></div>
     <button type="button" class="btn line sm" id="pb_rubric_add" style="margin-top:6px">${svg('plus','xs')}기준 추가</button>
     <div class="divider"></div>
