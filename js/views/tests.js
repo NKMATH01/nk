@@ -132,7 +132,7 @@ async function renderQuestionDef(body,c){
     cnt.textContent=items.length?items.length+'개':'없음';
     const over=items.length&&sum>max;
     const under=items.length&&sum<max;
-    cnt.className='chip '+(over?'red':(under?'amber':(items.length?'blue':'gray')));
+    cnt.className='rub-count chip '+(over?'red':(under?'amber':(items.length?'blue':'gray')));
     const msg=rtr.querySelector('.rub-msg');
     msg.textContent=over?('기준 합계 '+sum+'점이 배점 '+max+'점을 초과합니다.'):
       (under?('기준 합계 '+sum+' / 배점 '+max+' — 남는 '+(max-sum)+'점은 항상 부여되는 기본 점수로 처리됩니다.'):
