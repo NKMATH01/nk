@@ -58,10 +58,20 @@ function draftBox(n){
       <div style="white-space:pre-wrap;margin-top:2px">${safe?esc(safe):'<span class="muted">(공개할 만한 문장이 없다고 판단됨)</span>'}</div></div>
     <div class="row" style="margin-top:8px">
       <button class="btn sm cd_take" data-id="${esc(n.id)}">초안 가져오기</button>
-      ${safe?`<button class="btn line sm cd_safe" data-id="${esc(n.id)}">공개용 문장 가져오기</button>`:''}
+      ${safe?`<button class="btn line sm cd_copy" data-id="${esc(n.id)}">공개용 문장 복사하기</button>`:''}
     </div>
-    <div class="muted" style="font-size:11px;margin-top:6px">가져온 뒤 고치고 [수정 저장]을 눌러야 기록에 남습니다. 유형은 제안일 뿐이니 폼에서 직접 고르세요.</div>
+    <div class="muted" style="font-size:11px;margin-top:6px">초안은 가져와 고친 뒤 [수정 저장]을 눌러야 기록에 남습니다. 공개용 문장은 복사해 아래 폼의 공개용 문장 칸에 붙여넣으세요. 유형은 제안일 뿐이니 폼에서 직접 고르세요.</div>
   </div>`;
+}
+
+/* 클립보드 API 가 막힌 환경(비보안 컨텍스트 등)용 폴백.
+   execCommand 는 사용자 제스처 안에서만 동작한다 — 클릭 핸들러에서만 부른다. */
+function copySafeFallback(t){
+  const ta=document.createElement('textarea');
+  ta.value=t;ta.style.position='fixed';ta.style.opacity='0';
+  document.body.appendChild(ta);ta.select();
+  let ok=false;try{ok=document.execCommand('copy');}catch(e){}
+  ta.remove();return ok;
 }
 
 /* ─── 브라우저 내 녹음 ─────────────────────────────────────────────
@@ -249,7 +259,7 @@ async function renderCounseling(c){
         <div class="card-cap tight">체크하면 <b>학생 화면과 학부모 화면</b> 양쪽에 이 기록이 보입니다(유형과 무관합니다). 나가는 것은 날짜·유형·아래 <b>공개용 문장</b>(비어 있으면 상담 내용)·후속 조치뿐이며, <b>녹음 전사문과 AI 초안은 나가지 않습니다.</b></div></div>
       <div class="field" id="cn_pubwrap"><label>학부모·학생 공개용 문장 (선택)</label>
         <textarea id="cn_public" rows="3" style="padding:9px 11px;border:1.5px solid var(--line);border-radius:9px">${editing&&editing.public_text?esc(editing.public_text):''}</textarea>
-        <div class="card-cap tight">비워 두면 위의 <b>상담 내용</b>이 그대로 보입니다. 상담 내용에 다른 학생·가정사 같은 이야기가 섞였을 때 여기에 따로 적으세요. AI 초안이 있으면 이력의 [공개용 문장 가져오기] 로 채운 뒤 고칠 수 있습니다.</div>
+        <div class="card-cap tight">비워 두면 위의 <b>상담 내용</b>이 그대로 보입니다. 상담 내용에 다른 학생·가정사 같은 이야기가 섞였을 때 여기에 따로 적으세요. AI 초안이 있으면 이력의 [공개용 문장 복사하기] 로 복사해 여기에 붙여넣은 뒤 고칠 수 있습니다.</div>
         <div class="card-cap tight" id="cn_puboff" style="display:none;color:var(--amber)">지금은 [학생·학부모에게 공개] 가 꺼져 있어 이 문장은 아무에게도 보이지 않습니다.</div></div>
       <button class="btn" id="cn_save">${svg('check','sm')}${editing?'수정 저장':'기록 저장'}</button>
       ${editing?'<button class="btn line" id="cn_cancel">취소</button>':''}
@@ -299,7 +309,7 @@ async function renderCounseling(c){
        학부모·학생 화면은 그때 content 로 폴백한다(js/views/parent.js·renderStudentCounsel).
        이 폴백이 없으면 public_text 가 비어 있는 **지금까지의 상담 기록이 전부**
        학부모 화면에서 사라진다. AI 초안이 이 값으로 자동으로 들어오는 경로는 없다 —
-       강사가 [공개용 문장 가져오기] 로 폼에 채우고 다시 저장해야 한다. */
+       강사가 [공개용 문장 복사하기] 로 복사해 이 칸에 붙여넣고 다시 저장해야 한다. */
     const payload={note_date:$('cn_date').value,category:$('cn_cat').value,content,
       public_text:$('cn_public').value.trim()||null,
       follow_up:$('cn_follow').value.trim()||null,visible_to_student:$('cn_visible').checked};
@@ -340,12 +350,15 @@ async function renderCounseling(c){
   /* [초안 가져오기] — 폼에 **채우기만** 한다. 저장은 강사가 [수정 저장] 을 눌러야 일어난다(2단계).
      ★ 편집 대상을 먼저 그 기록으로 바꾼다. 입력 폼은 화면에 하나뿐이라, 편집 대상이
        다른 상태에서 채우면 초안이 엉뚱한 기록에 붙거나 새 기록으로 저장된다
-       (녹음에서 만들어진 '(정돈 대기)' 행은 그대로 남고 중복이 생긴다). */
+       (녹음에서 만들어진 '(정돈 대기)' 행은 그대로 남고 중복이 생긴다).
+     ★ 이미 이 기록을 편집 중이면 재렌더하지 않는다 — 재렌더는 폼을 DB값으로 되돌려
+       공개용 문장 칸에 붙여넣어 둔 것 같은 **미저장 입력을 지운다**(재렌더 소실은
+       cu_date 를 모듈 스코프로 옮긴 것과 같은 계열의 문제다). 편집 대상 전환이
+       필요할 때만 재렌더한다. */
   c.querySelectorAll('.cd_take').forEach(b=>b.addEventListener('click',async()=>{
     const n=notes.find(x=>x.id===b.dataset.id);if(!n||!n.ai_draft)return;
     const d=n.ai_draft;
-    app.counselEdit=n.id;
-    await renderCounseling(c);
+    if(app.counselEdit!==n.id){app.counselEdit=n.id;await renderCounseling(c);}
     const ta=$('cn_content');
     if(ta)ta.value=[String(d.summary||'').trim(),
       (Array.isArray(d.key_points)&&d.key_points.length)?d.key_points.map(x=>'· '+x).join('\n'):'']
@@ -356,26 +369,22 @@ async function renderCounseling(c){
     if(m){m.className='msg';m.textContent='초안을 폼에 넣었습니다. 확인·수정한 뒤 [수정 저장]을 누르세요. 유형은 AI 제안을 참고해 직접 고르시면 됩니다.';}
   }));
 
-  /* [공개용 문장 가져오기] — 초안의 student_safe_text 를 **공개용 문장 칸에만** 채운다.
-     ★ 이 버튼은 상담 기록 화면에 하나뿐이다. 종전에는 같은 버튼이 이 문장을 상담 내용
-       뒤에 덧붙였는데, 공개용 문장을 담을 자리(public_text, 0021)가 생겼으므로 그쪽으로
-       옮긴다 — 버튼을 새로 만들지 않는다(같은 일을 하는 버튼이 둘이면 안 된다).
-     ★ 채우기만 한다. 저장은 강사가 [수정 저장] 을 눌러야 일어난다(2단계). AI 초안이
-       강사 확인 없이 확정 필드로 가는 경로를 만들지 않는다는 원칙 그대로다.
-     ★ 공개 체크박스는 건드리지 않는다. 공개 여부는 강사가 정할 일이라,
-       버튼 하나로 학생·학부모에게 보이는 상태가 되면 안 된다. */
-  c.querySelectorAll('.cd_safe').forEach(b=>b.addEventListener('click',async()=>{
+  /* [공개용 문장 복사하기] — 초안의 student_safe_text 를 **클립보드로만** 복사한다.
+     종전의 [공개용 문장 가져오기] 는 편집 대상을 바꾸며 재렌더했는데, 그 재렌더가
+     [초안 가져오기] 로 채워 둔 미저장 폼 값을 DB값으로 되돌려 **초안과 공개용 문장을
+     한 번에 저장할 수 없었다**. 그래서 폼·편집 상태를 일절 건드리지 않는 복사로 바꾼다 —
+     강사가 폼의 공개용 문장 칸에 붙여넣고 [수정 저장] 한다. AI 초안이 강사 확인 없이
+     확정 필드로 가는 경로를 만들지 않는다는 2단계 원칙은 그대로다(붙여넣기가 그 확인이다).
+     공개 체크박스도 종전과 같이 건드리지 않는다. */
+  c.querySelectorAll('.cd_copy').forEach(b=>b.addEventListener('click',async()=>{
     const n=notes.find(x=>x.id===b.dataset.id);if(!n||!n.ai_draft)return;
     const t=String(n.ai_draft.student_safe_text||'').trim();if(!t)return;
-    app.counselEdit=n.id;
-    await renderCounseling(c);
-    const ta=$('cn_public');if(!ta)return;
-    const had=!!ta.value.trim();
-    ta.value=t;
-    const m=$('cn_msg');
-    if(m){m.className='msg';
-      m.textContent=(had?'공개용 문장 칸에 있던 값을 초안으로 바꿨습니다. ':'초안의 공개용 문장을 폼에 넣었습니다. ')
-        +'확인·수정한 뒤 [수정 저장]을 눌러야 기록에 남습니다. 학부모·학생에게 보이려면 [학생·학부모에게 공개]도 체크하세요.';}
+    let ok=true;
+    try{await navigator.clipboard.writeText(t);}
+    catch(e){ok=copySafeFallback(t);}
+    if(!ok){alert('클립보드 복사에 실패했습니다. 초안 상자의 공개용 문장을 직접 선택해 복사하세요.');return;}
+    const old=b.textContent;b.textContent='복사됨 ✓';b.disabled=true;
+    setTimeout(()=>{b.textContent=old;b.disabled=false;},1600);
   }));
 }
 
@@ -387,7 +396,7 @@ async function runDraft(c,noteId){
   const box=h=>{const o=$('cd_out_'+noteId);if(o)o.innerHTML=h;};
   if(!$('cd_out_'+noteId))return;
   // 이력 전체의 AI 버튼을 잠근다 — 여러 기록을 동시에 돌리면 어느 결과인지 헷갈린다.
-  const ctl=[...c.querySelectorAll('.cd_run,.cd_take,.cd_safe')];
+  const ctl=[...c.querySelectorAll('.cd_run,.cd_take,.cd_copy')];
   ctl.forEach(el=>el.disabled=true);
   box(`<div style="${DRAFT_BOX}"><span class="muted" style="font-size:12px">초안 생성 중... 잠시만 기다리세요.</span></div>`);
   try{
