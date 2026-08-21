@@ -95,6 +95,9 @@ function canRecord(){
    DOM 이 아니라 여기에 매달려 있으므로 녹음이 끊기지 않는다. 경과 시간 타이머도 매 틱
    $('cu_time') 을 다시 찾으므로 재렌더된 새 노드에 그대로 이어 쓴다. */
 const REC={state:'idle',rec:null,stream:null,chunks:[],startedAt:0,durSec:0,timer:null,blob:null,url:null,sid:null};
+/* 상담 화면은 녹음 시작·정지 때 innerHTML 전체를 다시 그린다. 날짜를 DOM 에만 두면
+   사용자가 고른 값이 오늘로 초기화되므로 녹음·파일 업로드가 끝날 때까지 모듈 스코프에 보관한다. */
+let cuDate=null;
 const mmss=s=>String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
 const recElapsed=()=>Math.max(0,Math.floor((Date.now()-REC.startedAt)/1000));
 function recTick(){const t=$('cu_time');if(t)t.textContent=mmss(recElapsed());}
@@ -225,6 +228,7 @@ async function renderCounseling(c){
     <div class="selectbar" style="margin-top:-8px"><span class="chip gray">상담 ${notes.length}회</span> ${consentChip}</div>
     <div class="card"><h3>${svg('spark')}녹음 · 전사</h3>
       <div class="muted" style="font-size:11.5px;margin-bottom:10px">이 화면에서 바로 녹음하거나, 이미 녹음한 파일을 올릴 수 있습니다. 어느 쪽이든 상담 기록이 먼저 만들어지고(내용 '(정돈 대기)'), 전사문이 붙습니다. 확정 내용은 강사가 아래 폼에서 직접 정돈합니다. 보통 길이인 15~20분 상담은 그대로 처리됩니다(${MAX_AUDIO_MB}MB 이하).</div>
+      <div class="field" style="max-width:180px"><label>상담 날짜</label><input id="cu_date" type="date" value="${esc(cuDate||todayStr())}"></div>
       ${recPane}
       <div style="border-top:1px dashed var(--line);margin:12px 0"></div>
       <div class="row"><div class="field" style="flex:1"><label>녹음 파일 올리기</label><input id="cu_file" type="file" accept="audio/*" ${block?'disabled':''}></div>
@@ -256,6 +260,7 @@ async function renderCounseling(c){
   // 녹음본이 남아 있는 동안에는 학생을 바꾸지 못하게 한다 — A 의 녹음이 B 의 기록으로
   // 붙는 사고를 막는다. [녹음 버리기] 나 업로드가 끝나면 다시 풀린다.
   if(recBusy){const ss=$('stuSel');if(ss)ss.disabled=true;}
+  $('cu_date')?.addEventListener('change',e=>{cuDate=e.target.value;});
   $('cu_rec')?.addEventListener('click',()=>startRec(c,sid));
   $('cu_again')?.addEventListener('click',()=>startRec(c,sid));
   $('cu_stop')?.addEventListener('click',stopRec);
@@ -445,7 +450,7 @@ async function uploadAndTranscribe(c,sid,stu,blob,ext,fromRec){
   try{
     m.textContent='기록 준비 중...';
     // content 가 not null 이라 확정 전에는 자리표시 문구를 넣는다(제약은 완화하지 않는다).
-    const note=await db.insertCounseling({student_id:sid,note_date:todayStr(),category:COUNSEL_CATS[0],
+    const note=await db.insertCounseling({student_id:sid,note_date:($('cu_date')?.value)||todayStr(),category:COUNSEL_CATS[0],
       content:'(정돈 대기)',follow_up:null,visible_to_student:false,ai_status:'uploaded'});
     if(!note||!note.id)throw new Error('상담 기록 id 를 받지 못했습니다.');
     noteId=note.id;

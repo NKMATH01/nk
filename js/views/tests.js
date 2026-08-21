@@ -429,6 +429,8 @@ function openTagMenu(td,q){
     });
     recalcChecks(true);
   })();
+  // 빈 셀만 만점으로 시작한다 — 이미 저장되어 복원된 점수는 절대 덮어쓰지 않는다.
+  if(rubricMode&&td.querySelector('input').value==='')recalcRubric(false);
 
   // AI 분석 섹션(관리자 전용). 키 미설정이면 버튼을 비활성화하고 이유를 보여준다.
   initAiSection(panel,td,markTag,rubricMode);
